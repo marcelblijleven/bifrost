@@ -39,9 +39,7 @@ func (s *ChangelogStep) Run(ctx context.Context, sc *pipeline.StepContext) error
 	}
 	head := sc.Event.CommitSHA
 
-	// When the application is scoped to paths (monorepo), the changelog must
-	// only list commits touching those paths, which rules out the provider's
-	// whole-repo release-notes generation.
+	// Path scoping rules out the provider's whole-repo notes generation.
 	pathFilters := sc.Application.SkipConditions.PathsInclude
 
 	// GitHub's generate-notes API requires previous_tag_name to be a real tag,
@@ -73,9 +71,8 @@ func (s *ChangelogStep) Run(ctx context.Context, sc *pipeline.StepContext) error
 }
 
 // filterCommitsByPaths narrows commits to those touching at least one of the
-// application's included paths. Filtering needs per-commit file lists from
-// the provider; when the provider cannot supply them, or a lookup fails, the
-// commit is kept rather than silently dropped.
+// patterns. When the provider cannot list a commit's files, the commit is
+// kept rather than silently dropped.
 func filterCommitsByPaths(ctx context.Context, sc *pipeline.StepContext, commits []provider.Commit, patterns []string) []provider.Commit {
 	if len(patterns) == 0 || len(commits) == 0 {
 		return commits

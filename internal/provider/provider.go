@@ -21,13 +21,10 @@ type PushEvent struct {
 	ProviderID string
 	RepoOwner  string
 	RepoName   string
-	// Branch is the pushed branch name. Empty when the push is a tag push
-	// (TagName is set instead).
+	// Branch is the pushed branch name; empty for tag pushes.
 	Branch string
-	// TagName is the pushed tag name when the event is a tag push (a push to
-	// refs/tags/... or a provider tag-create event). Empty for branch pushes.
-	// For annotated tags CommitSHA may be the tag object SHA rather than the
-	// tagged commit; resolve it with Provider.GetTagCommitSHA.
+	// TagName is set for tag pushes instead of Branch. For annotated tags
+	// CommitSHA may be the tag object SHA; resolve via GetTagCommitSHA.
 	TagName   string
 	CommitSHA string
 	// BeforeSHA is the branch head before this push (the payload's 'before'
@@ -148,11 +145,9 @@ type Provider interface {
 }
 
 // CommitFilesLister is implemented by providers that can list the files
-// changed by a single commit. The changelog step uses it to scope a
-// changelog to an application's paths when several applications share one
-// repository; providers without it skip path filtering.
+// changed by a single commit. The changelog step uses it to scope entries to
+// an application's paths; providers without it skip path filtering.
 type CommitFilesLister interface {
-	// ListCommitFiles returns the paths touched by the commit.
 	ListCommitFiles(ctx context.Context, owner, repo, sha string) ([]string, error)
 }
 

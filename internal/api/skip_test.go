@@ -37,8 +37,8 @@ func TestShouldSkip_PathsIgnore(t *testing.T) {
 		files []string
 		want  bool
 	}{
-		{[]string{"docs/guide.md", "docs/api.md"}, true}, // all match
-		{[]string{"README.md"}, true},                    // *.md matches root
+		{[]string{"docs/guide.md", "docs/api.md"}, true},  // all match
+		{[]string{"README.md"}, true},                     // *.md matches root
 		{[]string{"src/main.go", "docs/guide.md"}, false}, // src/main.go not ignored
 		{[]string{"src/main.go"}, false},                  // no ignore match
 		{[]string{}, false},                               // no files → don't skip

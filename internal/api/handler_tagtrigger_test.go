@@ -52,8 +52,7 @@ func tagEvent(tag, sha string) provider.PushEvent {
 	}
 }
 
-// reachable returns a provider that resolves every tag to commit and reports
-// it reachable from the branch head.
+// reachableProvider resolves every tag to commit and reports it reachable.
 func reachableProvider(commit string) *tagTriggerProvider {
 	return &tagTriggerProvider{
 		tagCommit: commit,
@@ -78,8 +77,6 @@ func TestTagTrigger_MatchingTag_QueuesRun(t *testing.T) {
 		t.Fatalf("expected one run, got %d", len(st.createdRuns))
 	}
 	run := st.createdRuns[0]
-	// The annotated tag object SHA from the payload must be resolved to the
-	// tagged commit.
 	if run.CommitSHA != "abc" {
 		t.Errorf("run.CommitSHA = %q, want resolved commit abc", run.CommitSHA)
 	}

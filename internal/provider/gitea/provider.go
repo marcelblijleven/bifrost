@@ -74,8 +74,7 @@ func (p *Provider) ParseWebhook(r *http.Request, secret string) (provider.PushEv
 	if eventType == "" {
 		eventType = r.Header.Get("X-Forgejo-Event")
 	}
-	// Gitea/Forgejo deliver tag creation as a "create" event (ref_type "tag"),
-	// not as a push to refs/tags/... like GitHub.
+	// Gitea/Forgejo deliver tag creation as a "create" event, not a push.
 	if eventType == "create" {
 		return parseCreateEvent(p.id, body)
 	}
@@ -88,8 +87,8 @@ func (p *Provider) ParseWebhook(r *http.Request, secret string) (provider.PushEv
 		return provider.PushEvent{}, fmt.Errorf("parse push payload: %w", err)
 	}
 
+	// Some Gitea/Forgejo versions also mirror tag pushes as push events.
 	if tag := strings.TrimPrefix(payload.Ref, "refs/tags/"); tag != payload.Ref {
-		// Some Gitea/Forgejo versions also mirror tag pushes as push events.
 		return provider.PushEvent{
 			ProviderID: p.id,
 			RepoOwner:  payload.Repository.Owner.Login,
@@ -495,9 +494,8 @@ func (p *Provider) do(ctx context.Context, method, path string, body, out any) e
 
 // ── Payload types ─────────────────────────────────────────────────────────────
 
-// parseCreateEvent decodes a Gitea/Forgejo "create" event. Only tag creation
-// is translated into a PushEvent; branch creation is reported through the
-// regular push event and is ignored here.
+// parseCreateEvent decodes a Gitea/Forgejo "create" event; only tag creation
+// is translated into a PushEvent.
 func parseCreateEvent(providerID string, body []byte) (provider.PushEvent, error) {
 	var payload struct {
 		SHA     string `json:"sha"`

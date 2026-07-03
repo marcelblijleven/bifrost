@@ -12,8 +12,7 @@
   let steps = $state<Step[]>([])
   let validationError = $state('')
   let triggerType = $state<'push' | 'tag'>('push')
-  // The pushed tag provides the version for tag-triggered apps, so semver and
-  // tag steps are excluded and steps requiring semver are satisfied by it.
+  // For tag triggers the pushed tag provides the version.
   const excludeTypes = $derived(triggerType === 'tag' ? ['semver', 'tag'] : [])
   const satisfiedRequires = $derived(triggerType === 'tag' ? ['semver'] : [])
 

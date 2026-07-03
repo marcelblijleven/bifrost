@@ -89,9 +89,9 @@
     satisfiedRequires = [],
   }: {
     steps: Step[]
-    /** Step types hidden from the add menu (e.g. semver/tag for tag-triggered apps). */
+    /** Step types hidden from the add menu. */
     excludeTypes?: string[]
-    /** Requirements met outside the pipeline (mirrors Registry.Build's satisfied list). */
+    /** Requirements met outside the pipeline (mirrors Registry.Build). */
     satisfiedRequires?: string[]
   } = $props()
 

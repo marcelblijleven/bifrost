@@ -35,6 +35,7 @@ On first visit you are redirected to `/setup` to create the admin account.
 | `API_KEY` | Yes | Static key for management API calls |
 | `HTTP_ADDR` | No | Listen address (default `:8080`) |
 | `PUBLIC_URL` | No | Externally reachable URL of this instance; required for the "Install webhook" button |
+| `FRONTEND_URL` | No | Single-port mode: URL of the SvelteKit SSR server (e.g. `http://127.0.0.1:3000`). When set, the Go server proxies all non-API paths there and serves the API under `/api` only |
 | `GITHUB_TOKEN` | * | Personal access token (`repo` + `workflow` scopes) |
 | `GITHUB_APP_ID` | * | GitHub App ID (takes priority over token) |
 | `GITHUB_INSTALLATION_ID` | * | GitHub App installation ID |
@@ -62,6 +63,7 @@ On first visit you are redirected to `/setup` to create the admin account.
 | `make lint` | Run golangci-lint |
 | `make docker-up` | Start Postgres container |
 | `make docker-down` | Stop containers |
+| `make docker-build` | Build the production Docker images locally (`VERSION=1.2.3` to stamp) |
 
 ## Triggers
 
@@ -160,6 +162,61 @@ export BIFROST_TOKEN=<token>
 ```
 
 Run `./bin/bifrost-cli --help` for all commands. Supports `--output json` on every command.
+
+## Releases
+
+Bifrost releases Bifrost (dogfooding). The application is registered in its own instance with this pipeline; note `v_prefix: false`, versions are bare like `0.2.0`:
+
+```json
+[
+  { "type": "semver", "config": { "v_prefix": false } },
+  { "type": "changelog" },
+  { "type": "tag" },
+  { "type": "create_release" },
+  { "type": "dispatch_workflow", "config": { "workflow": "release.yml", "wait": true, "timeout_minutes": 45 } }
+]
+```
+
+Suggested skip conditions so documentation changes never cut a release:
+
+```json
+{
+  "commit_patterns": ["[skip release]"],
+  "paths_ignore": ["**/*.md", "frontend/src/lib/docs/**"]
+}
+```
+
+On every push to `main`, Bifrost computes the next version, generates the changelog, tags, creates the GitHub release, and dispatches `.github/workflows/release.yml` at the new tag. That workflow attaches the artifacts to the release:
+
+- `bifrost-cli_<version>_<os>_<arch>.tar.gz` for linux, macOS (amd64/arm64), and windows (amd64)
+- `bifrost-server_<version>_linux_<arch>.tar.gz` (amd64/arm64)
+- `checksums.txt` (sha256)
+- Docker image `ghcr.io/marcelblijleven/bifrost:<version>` and `:latest` (multi-arch: amd64/arm64)
+
+`.github/workflows/ci.yml` runs Go tests and vet, frontend type checks and tests, and a Docker image build on every push and pull request.
+
+## Docker
+
+A single `Dockerfile` builds everything, and the default image exposes a single port. The Go server owns port 8080 and serves the web UI (reverse-proxied to the in-container SvelteKit server), the JSON API under `/api`, webhooks, health, and metrics:
+
+```bash
+docker run -d \
+  -e DATABASE_URL=postgres://... \
+  -e JWT_SECRET=... -e API_KEY=... \
+  -e ORIGIN=https://bifrost.example.com \
+  -e PUBLIC_URL=https://bifrost.example.com \
+  -e GITHUB_TOKEN=... \
+  -p 8080:8080 \
+  ghcr.io/marcelblijleven/bifrost:latest
+```
+
+Or run the full stack (Postgres included) with the production compose file:
+
+```bash
+BIFROST_VERSION=0.2.0 docker compose -f docker-compose.prod.yml up -d
+```
+
+Point your TLS-terminating proxy at port 8080; no path-based routing needed. The CLI targets the same port: `BIFROST_URL=https://bifrost.example.com/api`. For split deployments the same Dockerfile provides `--target api` and `--target web` stages.
 
 ## Production
 
