@@ -8,18 +8,13 @@ import (
 	"github.com/marcelblijleven/bifrost/internal/store"
 )
 
-// skipKind classifies why a push was skipped, so the webhook handler can
-// decide whether the skip deserves a run record.
+// skipKind classifies why a push was skipped: commit-message opt-outs are
+// recorded as skipped runs, path-routing skips are only logged.
 type skipKind int
 
 const (
 	skipNone skipKind = iota
-	// skipCommitPattern: the author opted out via the commit message. Recorded
-	// as a skipped run for visibility.
 	skipCommitPattern
-	// skipPathRouting: the push did not touch this application's paths. With
-	// several applications sharing a repository this is the normal routing
-	// outcome for most pushes, so it is logged but not recorded as a run.
 	skipPathRouting
 )
 

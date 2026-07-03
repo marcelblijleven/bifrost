@@ -101,8 +101,7 @@ func (p *Provider) ParseWebhook(r *http.Request, secret string) (provider.PushEv
 		return provider.PushEvent{}, provider.ErrNotPushEvent
 	}
 
-	// A push to refs/tags/... is a tag push: GitHub delivers tag creation and
-	// deletion through the same push event type.
+	// GitHub delivers tag pushes through the same push event type.
 	var branch, tagName string
 	switch ref := pushEvent.GetRef(); {
 	case strings.HasPrefix(ref, "refs/tags/"):

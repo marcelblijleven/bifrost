@@ -47,9 +47,8 @@ func (s *SemverStep) Run(ctx context.Context, sc *pipeline.StepContext) error {
 		return fmt.Errorf("list tags: %w", err)
 	}
 
-	// The application's tag prefix namespaces its releases within the repo
-	// (monorepo: several applications tag the same repository). Versions are
-	// computed on the stripped names; the prefix is re-applied to the result.
+	// Versions are computed on prefix-stripped tag names; the prefix is
+	// re-applied to the result.
 	prefix := sc.Application.TagPrefix
 	if prefix != "" {
 		stripped := make([]string, 0, len(tags))

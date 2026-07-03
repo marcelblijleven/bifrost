@@ -1,0 +1,11 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+bin/
+tmp/
+frontend/node_modules/
+frontend/build/
+frontend/.svelte-kit/
+*.md

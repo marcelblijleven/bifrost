@@ -1,0 +1,50 @@
+# Production-style stack using the released image from GHCR.
+#
+#   BIFROST_VERSION=0.2.0 docker compose -f docker-compose.prod.yml up -d
+#
+# Set JWT_SECRET, API_KEY, PUBLIC_URL, ORIGIN, and provider credentials in the
+# environment or an .env file next to this compose file. Everything (UI, API
+# under /api, webhooks) is served on the single port 8080; point your
+# TLS-terminating proxy at it.
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: bifrost
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bifrost}
+      POSTGRES_DB: bifrost
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bifrost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  bifrost:
+    image: ghcr.io/marcelblijleven/bifrost:${BIFROST_VERSION:-latest}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://bifrost:${POSTGRES_PASSWORD:-bifrost}@db:5432/bifrost?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      API_KEY: ${API_KEY:?set API_KEY}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      ORIGIN: ${ORIGIN:?set ORIGIN to the public URL of the frontend}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_INSTALLATION_ID: ${GITHUB_INSTALLATION_ID:-}
+      GITHUB_PRIVATE_KEY: ${GITHUB_PRIVATE_KEY:-}
+      GITEA_URL: ${GITEA_URL:-}
+      GITEA_TOKEN: ${GITEA_TOKEN:-}
+      FORGEJO_URL: ${FORGEJO_URL:-}
+      FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
+    ports:
+      - "8080:8080" # UI, API (/api), webhooks, health, metrics
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

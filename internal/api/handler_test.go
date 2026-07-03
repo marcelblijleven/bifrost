@@ -364,7 +364,7 @@ func newTestRouter(st store.Store) http.Handler {
 func newTestRouterWithProviders(st store.Store, providers map[string]provider.Provider) http.Handler {
 	reg := pipeline.NewRegistry()
 	h := api.NewHandler(st, providers, reg, testJWTSecret, "", nil)
-	return api.NewRouter(h, testAPIKey, testJWTSecret)
+	return api.NewRouter(h, testAPIKey, testJWTSecret, nil)
 }
 
 // newTestRouterWithSteps registers the real step types (mirroring cmd/bifrost/main.go)
@@ -381,7 +381,7 @@ func newTestRouterWithSteps(st store.Store) http.Handler {
 	reg.Register("create_release", steps.NewCreateReleaseStep)
 	reg.Register("notify", steps.NewNotifyStep)
 	h := api.NewHandler(st, nil, reg, testJWTSecret, "", nil)
-	return api.NewRouter(h, testAPIKey, testJWTSecret)
+	return api.NewRouter(h, testAPIKey, testJWTSecret, nil)
 }
 
 func authHeader(t *testing.T) string {

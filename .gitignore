@@ -4,6 +4,9 @@
 *.test
 *.out
 
+# air hot-reload build output
+/tmp/
+
 # Environment
 .env
 

@@ -13,10 +13,14 @@ var (
 	flagToken  string
 )
 
+// version is stamped at build time via -ldflags "-X main.version=v1.2.3".
+var version = "dev"
+
 func main() {
 	root := &cobra.Command{
-		Use:   "bifrost",
-		Short: "Bifrost release orchestration CLI",
+		Use:               "bifrost",
+		Short:             "Bifrost release orchestration CLI",
+		Version:           version,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
 

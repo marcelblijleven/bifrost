@@ -12,8 +12,8 @@ export function parseTrigger(data: FormData): {
 	const tagPrefix = ((data.get('tag_prefix') as string) ?? '').trim();
 	return {
 		TriggerType: triggerType,
-		// Each field only applies to its own trigger type; the other is cleared
-		// so switching types doesn't leave stale config behind.
+		// Clear the field of the other trigger type so switching types does
+		// not leave stale config behind.
 		TagPattern: triggerType === 'tag' ? tagPattern : '',
 		TagPrefix: triggerType === 'push' ? tagPrefix : ''
 	};

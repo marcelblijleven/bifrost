@@ -51,10 +51,8 @@ const (
 	HeadStateBlocked = "blocked"
 )
 
-// Application trigger types. A push-triggered application runs its pipeline
-// for commits on the tracked branch; a tag-triggered application runs it when
-// a tag matching TagPattern is pushed. An application listens to one or the
-// other, never both.
+// Application trigger types: an application runs its pipeline for commits on
+// the tracked branch OR for pushed tags matching TagPattern, never both.
 const (
 	TriggerPush = "push"
 	TriggerTag  = "tag"
@@ -74,12 +72,12 @@ type Application struct {
 	SkipConditions SkipConditions
 	// TriggerType is TriggerPush (default) or TriggerTag.
 	TriggerType string
-	// TagPattern is the glob a pushed tag must match to trigger a tag-triggered
-	// application (e.g. "v*" or "frontend-v*"). Empty for push-triggered apps.
+	// TagPattern is the glob a pushed tag must match to trigger a run
+	// (e.g. "v*"). Only set for tag-triggered applications.
 	TagPattern string
-	// TagPrefix namespaces the tags the semver step reads and creates, so
-	// several applications can release from one repository (e.g. "frontend-"
-	// yields tags like "frontend-v1.2.3"). Empty means the whole namespace.
+	// TagPrefix namespaces the tags the semver step reads and creates
+	// (e.g. "frontend-" yields "frontend-v1.2.3"), so several applications
+	// can release from one repository.
 	TagPrefix string
 	// LastKnownSHA is the head of the tracked branch as bifrost last saw it.
 	// Every incoming push must chain onto it; see Handler.HandleWebhook.
@@ -105,13 +103,12 @@ type PipelineRun struct {
 	TriggeredBy   string
 	Status        string // pending, running, success, failed, cancelled, superseded, skipped, blocked
 	Tag           string // computed version tag set by the semver step, e.g. "v0.1.6"
-	// TriggerTag is the tag name that triggered this run, set only for runs of
-	// tag-triggered applications. Unique per application: duplicate webhook
-	// deliveries of the same tag are rejected by the store.
-	TriggerTag string
-	StartedAt     *time.Time
-	CompletedAt   *time.Time
-	CreatedAt     time.Time
+	// TriggerTag is the tag that triggered this run (tag-triggered apps only).
+	// Unique per application: duplicate deliveries are rejected by the store.
+	TriggerTag  string
+	StartedAt   *time.Time
+	CompletedAt *time.Time
+	CreatedAt   time.Time
 	// ReleasedAt is set once the run completes all of its steps successfully.
 	// Used by the changelog step as the baseline for the next run's diff.
 	ReleasedAt *time.Time
@@ -210,8 +207,7 @@ type Store interface {
 	CreateApplication(ctx context.Context, a *Application) error
 	GetApplication(ctx context.Context, id uuid.UUID) (*Application, error)
 	// ListApplicationsByRepo returns every application registered for the
-	// repository. Several applications may share one repository (monorepo);
-	// webhook deliveries fan out to each of them.
+	// repository; webhook deliveries fan out to each of them.
 	ListApplicationsByRepo(ctx context.Context, provider, owner, repo string) ([]*Application, error)
 	ListApplications(ctx context.Context) ([]*Application, error)
 	// ListApplicationsForUser returns applications accessible to the user:
@@ -253,9 +249,8 @@ type Store interface {
 	GetDashboardStats(ctx context.Context) (*DashboardStats, error)
 
 	// Pipeline runs
-	// CreatePipelineRun inserts the run. For runs with a TriggerTag it returns
-	// ErrDuplicateTriggerTag when a run for the same application and tag
-	// already exists (duplicate or concurrent webhook delivery).
+	// CreatePipelineRun inserts the run. Returns ErrDuplicateTriggerTag when a
+	// run with the same non-empty TriggerTag already exists for the application.
 	CreatePipelineRun(ctx context.Context, run *PipelineRun) error
 	// GetRunByTriggerTag returns the run created for the given trigger tag, or
 	// nil, nil when the tag has not triggered a run yet.

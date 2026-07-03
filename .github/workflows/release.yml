@@ -1,0 +1,109 @@
+name: Release
+
+# Dispatched by Bifrost itself at the tag ref after it created the tag and
+# the GitHub release. Builds the artifacts (CLI and server binaries,
+# checksums, the combined Docker image) and attaches them to that release.
+# Manual dispatch works too: select the tag as the ref.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  binaries:
+    name: Binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a tag ref
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          echo "This workflow must be dispatched on a tag ref, got ${GITHUB_REF}" >&2
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ldflags="-s -w -X main.version=${VERSION}"
+
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            goos=${target%/*} goarch=${target#*/}
+            ext=""
+            [ "$goos" = "windows" ] && ext=".exe"
+            out="dist/bifrost-cli_${VERSION}_${goos}_${goarch}"
+            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
+              go build -trimpath -ldflags "$ldflags" -o "${out}/bifrost-cli${ext}" ./cmd/bifrost-cli
+            tar -czf "${out}.tar.gz" -C "$out" .
+            rm -r "$out"
+          done
+
+          # Server: linux only; other platforms are served by the Docker images.
+          for target in linux/amd64 linux/arm64; do
+            goos=${target%/*} goarch=${target#*/}
+            out="dist/bifrost-server_${VERSION}_${goos}_${goarch}"
+            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
+              go build -trimpath -ldflags "$ldflags" -o "${out}/bifrost" ./cmd/bifrost
+            tar -czf "${out}.tar.gz" -C "$out" .
+            rm -r "$out"
+          done
+
+          (cd dist && sha256sum *.tar.gz > checksums.txt)
+          ls -lh dist/
+
+      - name: Upload artifacts to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # The release normally already exists (created by Bifrost's
+          # create_release step); create it only for manual runs.
+          if ! gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release create "$VERSION" --verify-tag --generate-notes
+          fi
+          gh release upload "$VERSION" dist/* --clobber
+
+  docker:
+    name: Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a tag ref
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          echo "This workflow must be dispatched on a tag ref, got ${GITHUB_REF}" >&2
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest

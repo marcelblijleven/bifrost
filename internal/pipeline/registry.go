@@ -24,10 +24,9 @@ func (r *Registry) Register(stepType string, f StepFactory) {
 }
 
 // Build instantiates steps from a project's pipeline config, validating that
-// any step-ordering requirements (see Requires) are satisfied by the configured
-// order. satisfied lists step types whose requirements are met outside the
-// pipeline: tag-triggered applications seed the release tag from the pushed
-// tag, satisfying "semver" without running the step.
+// any step-ordering requirements (see Requires) are satisfied by the
+// configured order. satisfied lists step types whose requirements are met
+// outside the pipeline (e.g. "semver" for tag-triggered applications).
 func (r *Registry) Build(configs []store.StepConfig, satisfied ...string) ([]Step, error) {
 	steps := make([]Step, 0, len(configs))
 	seen := make(map[string]bool, len(configs)+len(satisfied))

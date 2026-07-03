@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,6 +21,9 @@ import (
 	"github.com/marcelblijleven/bifrost/internal/store"
 	pgstore "github.com/marcelblijleven/bifrost/internal/store/postgres"
 )
+
+// version is stamped at build time via -ldflags "-X main.version=v1.2.3".
+var version = "dev"
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -91,7 +95,17 @@ func main() {
 	h := api.NewHandler(st, providers, reg, cfg.JWTSecret, cfg.PublicURL, broker)
 	h.Start(ctx)
 
-	router := api.NewRouter(h, cfg.APIKey, cfg.JWTSecret)
+	var frontendURL *url.URL
+	if cfg.FrontendURL != "" {
+		frontendURL, err = url.Parse(cfg.FrontendURL)
+		if err != nil || frontendURL.Scheme == "" || frontendURL.Host == "" {
+			slog.Error("invalid FRONTEND_URL", "value", cfg.FrontendURL, "err", err)
+			os.Exit(1)
+		}
+		slog.Info("single-port mode: proxying non-API paths to frontend", "frontend_url", cfg.FrontendURL)
+	}
+
+	router := api.NewRouter(h, cfg.APIKey, cfg.JWTSecret, frontendURL)
 
 	srv := &http.Server{
 		Addr:        cfg.HTTPAddr,
@@ -102,7 +116,7 @@ func main() {
 		IdleTimeout: 60 * time.Second,
 	}
 
-	slog.Info("bifrost starting", "addr", cfg.HTTPAddr, "version", "dev")
+	slog.Info("bifrost starting", "addr", cfg.HTTPAddr, "version", version)
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

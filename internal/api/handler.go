@@ -269,8 +269,7 @@ func (h *Handler) executeRun(ctx context.Context, run *store.PipelineRun) {
 		WakeApproval:        waker,
 		PriorExternalRunIDs: priorExternalRunIDs,
 	}
-	// Tag-triggered runs carry their release tag from creation; there is no
-	// semver step to compute it, so seed the pipeline context directly.
+	// Tag-triggered runs have no semver step; seed the tag from the trigger.
 	if run.TriggerTag != "" {
 		sc.Tag = run.Tag
 	}
@@ -341,8 +340,6 @@ func (h *Handler) fireFailureNotification(n store.NotificationConfig, run *store
 // ── Webhook ───────────────────────────────────────────────────────────────────
 
 // webhookResult is the per-application outcome of one webhook delivery.
-// Several applications may be registered on the same repository (monorepo);
-// each processes the event independently.
 type webhookResult struct {
 	ApplicationID uuid.UUID `json:"application_id"`
 	Application   string    `json:"application"`
@@ -368,7 +365,7 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Peek at owner/repo without signature validation to look up the applications' secrets.
+	// Peek at owner/repo to look up the applications' secrets.
 	var peek struct {
 		Repository struct {
 			Name  string `json:"name"`
@@ -402,10 +399,9 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the delivery against each application's secret. The apps of one
-	// repository normally share a secret (webhooks are installed by bifrost),
-	// but drift is tolerated: the event fans out to every application whose
-	// secret validates the signature.
+	// The event fans out to every application whose secret validates the
+	// signature; apps of one repository normally share a secret, but drift is
+	// tolerated.
 	var event provider.PushEvent
 	var matched []*store.Application
 	sawValidNonPush := false
@@ -460,16 +456,14 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if queued {
-		// Wake the poller so new runs are claimed without waiting for the next tick.
 		select {
 		case h.pollNow <- struct{}{}:
 		default:
 		}
 	}
 
-	// A transient per-app failure returns 502 so the provider redelivers;
-	// applications that already handled the event treat the redelivery as
-	// stale or duplicate.
+	// 502 makes the provider redeliver; apps that already handled the event
+	// treat the redelivery as stale or duplicate.
 	status := http.StatusOK
 	switch {
 	case failed:
@@ -489,8 +483,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// processEventForApp routes one validated push event to one application,
-// according to its trigger type.
+// processEventForApp routes one validated push event to one application.
 func (h *Handler) processEventForApp(ctx context.Context, app *store.Application, prov provider.Provider, event provider.PushEvent) webhookResult {
 	res := webhookResult{ApplicationID: app.ID, Application: app.Name}
 
@@ -518,9 +511,8 @@ func (h *Handler) processEventForApp(ctx context.Context, app *store.Application
 
 	if kind, reason := shouldSkip(app.SkipConditions, event); kind != skipNone {
 		slog.Info("skipping pipeline run", "app", app.ID, "reason", reason, "sha", event.CommitSHA)
-		// Path-based skips are routing (most pushes to a monorepo don't touch
-		// this app's paths) and would drown the run list; only opt-outs via
-		// commit message are recorded.
+		// Path-based skips are routing and would drown the run list; only
+		// commit-message opt-outs are recorded.
 		if kind == skipCommitPattern {
 			now := time.Now()
 			skipped := &store.PipelineRun{
@@ -564,15 +556,11 @@ func (h *Handler) processEventForApp(ctx context.Context, app *store.Application
 
 // processTagTrigger handles a tag push for a tag-triggered application: the
 // pushed tag is the release. The tag's commit must be reachable from the
-// application's branch, and a tag can trigger at most one run — recreating a
-// tag at a different commit is the tag equivalent of a force push and blocks
-// the application.
+// application's branch, and a tag can trigger at most one run.
 func (h *Handler) processTagTrigger(ctx context.Context, res webhookResult, app *store.Application, prov provider.Provider, event provider.PushEvent) webhookResult {
 	tag := event.TagName
 
 	if event.CommitSHA == provider.ZeroSHA {
-		// Tag deletion. Deleting alone is not acted on; recreating the tag at
-		// another commit is caught below via the recorded trigger tag.
 		res.Status, res.Reason = "ignored", "tag deleted"
 		return res
 	}
@@ -586,8 +574,7 @@ func (h *Handler) processTagTrigger(ctx context.Context, res webhookResult, app 
 		return res
 	}
 
-	// For annotated tags the push payload carries the tag object SHA; resolve
-	// to the tagged commit so runs always reference commits.
+	// For annotated tags the payload carries the tag object SHA, not the commit.
 	commitSHA, err := prov.GetTagCommitSHA(ctx, app.Owner, app.Repo, tag)
 	if err != nil {
 		slog.Error("tag trigger: resolve tag commit", "app", app.ID, "tag", tag, "err", err)
@@ -604,6 +591,7 @@ func (h *Handler) processTagTrigger(ctx context.Context, res webhookResult, app 
 			res.Status, res.Reason = "duplicate", "a run for this tag already exists"
 			return res
 		}
+		// Recreated tag at another commit: the tag equivalent of a force push.
 		blockEvent := event
 		blockEvent.CommitSHA = commitSHA
 		blockEvent.Branch = app.Branch
@@ -614,8 +602,6 @@ func (h *Handler) processTagTrigger(ctx context.Context, res webhookResult, app 
 		return res
 	}
 
-	// The tagged commit must be reachable from the application's branch, so a
-	// tag on a stray feature branch cannot ship a release.
 	branchHead, err := prov.GetBranchHead(ctx, app.Owner, app.Repo, app.Branch)
 	if err != nil {
 		slog.Error("tag trigger: get branch head", "app", app.ID, "branch", app.Branch, "err", err)
@@ -633,8 +619,8 @@ func (h *Handler) processTagTrigger(ctx context.Context, res webhookResult, app 
 			tag, shortSHA(commitSHA), app.Branch)
 		slog.Warn("tag trigger: tag commit not reachable from branch",
 			"app", app.ID, "tag", tag, "sha", commitSHA, "branch", app.Branch)
-		// No TriggerTag on this record: once the commit is merged, delivering
-		// the same tag again may legitimately start a run.
+		// No TriggerTag on this record: once the commit is merged, the same
+		// tag may legitimately start a run.
 		now := time.Now()
 		skipped := &store.PipelineRun{
 			ID:            uuid.New(),
@@ -968,8 +954,6 @@ func (h *Handler) AcceptApplicationHead(w http.ResponseWriter, r *http.Request) 
 
 	resp := map[string]string{"head": head, "head_state": store.HeadStateOK}
 	if body.TriggerRun && app.TriggerType == store.TriggerTag {
-		// A tag-triggered run needs a tag to release; there is nothing
-		// meaningful to run for a bare branch head.
 		writeError(w, http.StatusUnprocessableEntity,
 			"head accepted, but tag-triggered applications cannot start a run from a branch head; push a tag instead")
 		return
@@ -1067,10 +1051,9 @@ func (h *Handler) ListProviders(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string][]string{"providers": ids})
 }
 
-// presatisfiedSteps lists step requirements met outside the pipeline for the
-// application: tag-triggered apps seed the release tag from the pushed tag,
-// so steps requiring "semver" (changelog, release, ...) are satisfied
-// without a semver step.
+// presatisfiedSteps lists step requirements met outside the pipeline:
+// tag-triggered apps get their release tag from the pushed tag, satisfying
+// "semver" without the step.
 func presatisfiedSteps(a *store.Application) []string {
 	if a.TriggerType == store.TriggerTag {
 		return []string{"semver"}
@@ -1078,8 +1061,8 @@ func presatisfiedSteps(a *store.Application) []string {
 	return nil
 }
 
-// validateApplication checks trigger configuration invariants shared by
-// create and update. It normalises an empty trigger type to push.
+// validateApplication normalises an empty trigger type to push and checks
+// the trigger configuration invariants.
 func validateApplication(a *store.Application) error {
 	if a.TriggerType == "" {
 		a.TriggerType = store.TriggerPush
@@ -1252,8 +1235,7 @@ func (h *Handler) InstallWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webhookURL := h.publicURL + "/webhooks/" + app.Provider
-	// "create" carries tag creation on Gitea/Forgejo; GitHub reports tag
-	// pushes through the regular push event.
+	// "create" carries tag creation on Gitea/Forgejo.
 	if err := prov.InstallWebhook(r.Context(), app.Owner, app.Repo, webhookURL, plainSecret, []string{"push", "create", "workflow_run"}); err != nil {
 		writeError(w, http.StatusBadGateway, "failed to install webhook: "+err.Error())
 		return

@@ -15,9 +15,12 @@ type Config struct {
 	// PublicURL is the externally reachable URL of this Bifrost instance (e.g. https://bifrost.example.com).
 	// Required to auto-install webhooks on providers via the UI.
 	PublicURL string
-	GitHub    GitHubConfig
-	Gitea     GiteaConfig
-	Forgejo   GiteaConfig // same API as Gitea, different base URL and provider ID
+	// FrontendURL enables single-port mode: non-API paths are reverse-proxied
+	// to the SvelteKit SSR server at this URL and the API moves under /api.
+	FrontendURL string
+	GitHub      GitHubConfig
+	Gitea       GiteaConfig
+	Forgejo     GiteaConfig // same API as Gitea, different base URL and provider ID
 }
 
 // GitHubConfig holds GitHub-specific configuration.
@@ -96,6 +99,7 @@ func Load() (*Config, error) {
 		APIKey:      apiKey,
 		JWTSecret:   jwtSecret,
 		PublicURL:   os.Getenv("PUBLIC_URL"),
+		FrontendURL: os.Getenv("FRONTEND_URL"),
 		GitHub:      ghCfg,
 		Gitea: GiteaConfig{
 			URL:   os.Getenv("GITEA_URL"),
