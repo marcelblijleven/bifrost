@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Three horizontal bars, 44px tall, 18px gap, centred -->
+  <!-- Total height: 3×44 + 2×18 = 168, top offset: (256-168)/2 = 44 -->
+  <rect x="28" y="44"  width="200" height="44" rx="22" fill="#cc3333"/>
+  <rect x="28" y="106" width="200" height="44" rx="22" fill="#338844"/>
+  <rect x="28" y="168" width="200" height="44" rx="22" fill="#3355cc"/>
+</svg>

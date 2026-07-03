@@ -1,0 +1,18 @@
+[build]
+  cmd        = "go build -o ./tmp/bifrost ./cmd/bifrost"
+  bin        = "./tmp/bifrost"
+  delay      = 500
+  include_ext = ["go"]
+  exclude_dir = ["tmp", "vendor", "frontend", "cmd/bifrost-cli"]
+  kill_delay = "1s"
+  rerun_delay = 500
+
+[log]
+  time = false
+
+[color]
+  build  = "yellow"
+  runner = "green"
+
+[misc]
+  clean_on_exit = true

@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+	:root {
+		color-scheme: light;
+	}
+	.dark {
+		color-scheme: dark;
+	}
+
+	/* iOS Safari auto-zooms the viewport when focusing an input with font-size
+	   below 16px, and the zoom persists through SvelteKit's client-side
+	   navigation (e.g. after the login form submits). !important is needed
+	   because Tailwind's utilities layer (e.g. text-sm) is emitted after this
+	   base layer and wins at equal specificity otherwise. */
+	@media (max-width: 640px) {
+		input,
+		select,
+		textarea {
+			font-size: 16px !important;
+		}
+	}
+}
