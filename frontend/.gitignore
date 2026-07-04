@@ -1,5 +1,8 @@
 .svelte-kit/
-build/
+# build output is embedded into the Go binary; .gitkeep stays so the
+# go:embed pattern always matches even before the first frontend build
+build/*
+!build/.gitkeep
 node_modules/
 .env
 .playwright/

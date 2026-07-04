@@ -1,6 +1,6 @@
 # Production deployment (LXC)
 
-This guide covers running Bifrost on a Linux host using an LXC container, systemd services, PostgreSQL, and nginx with TLS. The same steps apply to any Debian/Ubuntu environment - the LXC wrapper is optional.
+This guide covers running Bifrost on a Linux host using an LXC container, systemd, PostgreSQL, and nginx with TLS. The same steps apply to any Debian/Ubuntu environment - the LXC wrapper is optional.
 
 ## Architecture
 
@@ -9,14 +9,10 @@ Internet
     │
     ▼
 nginx :443 (TLS)
-    ├── /webhooks/*  ──►  Go backend   :8080  (internal)
-    ├── /healthz     ──►  Go backend   :8080  (internal)
-    └── /*           ──►  SvelteKit    :3000  (internal)
-                              │
-                              └── API_URL ──►  Go backend :8080
+    └── /*  ──►  Bifrost :8080  (internal)
 ```
 
-The browser only ever talks to nginx. The SvelteKit Node.js server handles SSR and proxies all API calls (including SSE) to the Go backend using `API_URL`.
+Bifrost is a single Go binary with the web UI embedded. It serves everything on one port: the UI, the JSON API under `/api`, webhooks, health, and metrics. The browser authenticates with an httpOnly session cookie; no Node.js runtime is needed in production.
 
 ---
 
@@ -42,13 +38,6 @@ apt update && apt install -y \
   nginx certbot python3-certbot-nginx \
   postgresql postgresql-contrib \
   curl
-
-# Node.js 22 LTS
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-apt install -y nodejs
-
-# pnpm
-npm install -g pnpm
 ```
 
 ---
@@ -64,7 +53,7 @@ CREATE DATABASE bifrost OWNER bifrost;
 SQL
 ```
 
-The connection string for `.env` will be:
+The connection string for the env file will be:
 
 ```
 DATABASE_URL=postgres://bifrost:changeme@localhost:5432/bifrost?sslmode=disable
@@ -74,25 +63,26 @@ DATABASE_URL=postgres://bifrost:changeme@localhost:5432/bifrost?sslmode=disable
 
 ## 4. Build Bifrost
 
-Build on your development machine (or inside the container if you install Go):
+Build on your development machine (requires Go, Node.js, and pnpm). The frontend is compiled first and embedded into the Go binary:
 
 ```bash
-# Backend
-GOOS=linux GOARCH=amd64 go build -o bifrost ./cmd/bifrost
-
-# Frontend
+# Frontend (produces frontend/build/, embedded by the Go build)
 cd frontend
 pnpm install --frozen-lockfile
 pnpm build
-# Produces: frontend/build/
+cd ..
+
+# Single server binary with the UI embedded
+GOOS=linux GOARCH=amd64 go build -o bifrost ./cmd/bifrost
 ```
+
+Or simply `make build` on a linux/amd64 machine.
 
 Copy to the container:
 
 ```bash
 # From your dev machine
 lxc file push bifrost bifrost/usr/local/bin/bifrost
-lxc file push -r frontend/build bifrost/var/lib/bifrost/frontend-build
 ```
 
 Set ownership:
@@ -101,7 +91,6 @@ Set ownership:
 # Inside container
 chown bifrost:bifrost /usr/local/bin/bifrost
 chmod 755 /usr/local/bin/bifrost
-chown -R bifrost:bifrost /var/lib/bifrost
 ```
 
 ---
@@ -132,31 +121,17 @@ chmod 640 /etc/bifrost/env
 chown root:bifrost /etc/bifrost/env
 ```
 
-For the SvelteKit server, create `/etc/bifrost/frontend.env`:
-
-```bash
-cat > /etc/bifrost/frontend.env <<'EOF'
-PORT=3000
-HOST=127.0.0.1
-ORIGIN=https://bifrost.example.com
-API_URL=http://127.0.0.1:8080
-EOF
-
-chmod 640 /etc/bifrost/frontend.env
-chown root:bifrost /etc/bifrost/frontend.env
-```
-
-`ORIGIN` must match the public URL exactly - SvelteKit uses it for CSRF protection.
+`PUBLIC_URL` should be the exact public URL: it is used for webhook installation and, because it starts with `https://`, marks session cookies `Secure`.
 
 ---
 
-## 6. systemd services
+## 6. systemd service
 
-### Go backend - `/etc/systemd/system/bifrost.service`
+`/etc/systemd/system/bifrost.service`:
 
 ```ini
 [Unit]
-Description=Bifrost release orchestrator (API)
+Description=Bifrost release orchestrator
 After=network.target postgresql.service
 Requires=postgresql.service
 
@@ -180,39 +155,12 @@ ReadWritePaths=/var/lib/bifrost
 WantedBy=multi-user.target
 ```
 
-### SvelteKit frontend - `/etc/systemd/system/bifrost-web.service`
-
-```ini
-[Unit]
-Description=Bifrost frontend (SvelteKit)
-After=network.target bifrost.service
-Wants=bifrost.service
-
-[Service]
-Type=simple
-User=bifrost
-Group=bifrost
-WorkingDirectory=/var/lib/bifrost/frontend-build
-EnvironmentFile=/etc/bifrost/frontend.env
-ExecStart=/usr/bin/node index.js
-Restart=on-failure
-RestartSec=5s
-
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start both:
+Enable and start:
 
 ```bash
 systemctl daemon-reload
-systemctl enable --now bifrost bifrost-web
-systemctl status bifrost bifrost-web
+systemctl enable --now bifrost
+systemctl status bifrost
 ```
 
 ---
@@ -226,23 +174,9 @@ server {
     listen 80;
     server_name bifrost.example.com;
 
-    # GitHub webhooks go directly to the Go backend
-    location /webhooks/ {
-        proxy_pass         http://127.0.0.1:8080;
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Real-IP $remote_addr;
-        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-    }
-
-    # Health check (for load balancers / uptime monitors)
-    location /healthz {
-        proxy_pass http://127.0.0.1:8080;
-    }
-
-    # Everything else → SvelteKit (handles SSR, auth, SSE proxy)
+    # Everything (UI, /api, webhooks, health) → Bifrost
     location / {
-        proxy_pass             http://127.0.0.1:3000;
+        proxy_pass             http://127.0.0.1:8080;
         proxy_set_header       Host $host;
         proxy_set_header       X-Real-IP $remote_addr;
         proxy_set_header       X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -320,12 +254,11 @@ BIFROST_TOKEN=<api-key-from-env> \
 ## 10. Upgrading
 
 ```bash
-# Build new binary and frontend on dev machine, then:
+# Build the new binary on your dev machine (frontend included), then:
 lxc file push bifrost bifrost/usr/local/bin/bifrost
-lxc file push -r frontend/build bifrost/var/lib/bifrost/frontend-build
 
 # Inside container
-systemctl restart bifrost bifrost-web
+systemctl restart bifrost
 ```
 
 Migrations run automatically on startup - no manual steps needed.
@@ -337,7 +270,6 @@ Migrations run automatically on startup - no manual steps needed.
 | What | Where |
 |---|---|
 | Application logs | `journalctl -u bifrost -f` |
-| Frontend logs | `journalctl -u bifrost-web -f` |
 | Prometheus metrics | `https://bifrost.example.com/metrics` (internal only) |
 | Health check | `https://bifrost.example.com/healthz` |
 

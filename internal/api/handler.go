@@ -1846,6 +1846,15 @@ func (h *Handler) Setup(w http.ResponseWriter, r *http.Request) {
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
+// sessionTTL bounds both the JWT expiry and the session cookie lifetime.
+const sessionTTL = 24 * time.Hour
+
+// secureCookies reports whether session cookies should carry the Secure
+// flag, derived from the instance being served over HTTPS.
+func (h *Handler) secureCookies() bool {
+	return strings.HasPrefix(h.publicURL, "https://")
+}
+
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email    string `json:"email"`
@@ -1882,12 +1891,39 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	h.loginLimiter.reset(emailKey)
 	h.loginLimiter.reset(ipKey)
 
-	token, err := auth.GenerateToken(user.ID, user.Email, user.IsAdmin, h.jwtSecret, 24*time.Hour)
+	token, err := auth.GenerateToken(user.ID, user.Email, user.IsAdmin, h.jwtSecret, sessionTTL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
+
+	// Browsers authenticate via this httpOnly cookie; the token in the body
+	// is for non-browser clients (bifrost-cli) that send it as a Bearer header.
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   int(sessionTTL.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   h.secureCookies(),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+// Logout clears the session cookie. The JWT itself remains valid until it
+// expires; this only removes it from the browser.
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   h.secureCookies(),
+	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {

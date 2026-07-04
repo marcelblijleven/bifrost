@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 
 async function loginAs(page: Page, email: string, password: string) {
-	const res = await page.request.post('http://localhost:8080/auth/login', {
+	const res = await page.request.post('http://localhost:8080/api/auth/login', {
 		data: { email, password },
 	})
 	const { token } = await res.json()
@@ -12,7 +12,7 @@ async function loginAs(page: Page, email: string, password: string) {
 			domain: 'localhost',
 			path: '/',
 			httpOnly: true,
-			sameSite: 'Lax',
+			sameSite: 'Strict',
 		},
 	])
 }

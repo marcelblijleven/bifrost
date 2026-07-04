@@ -2,8 +2,6 @@ package api
 
 import (
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -11,12 +9,11 @@ import (
 
 // NewRouter builds the chi router with all routes and middleware applied.
 //
-// frontend enables single-port mode: when non-nil, non-API paths are
-// reverse-proxied to the SvelteKit SSR server there and the API is served
-// under /api only (root-level API paths collide with UI page paths). When
-// nil, the API is additionally served at its historical root-level paths.
-// Webhooks, health, and metrics stay at the root in both modes.
-func NewRouter(h *Handler, apiKey, jwtSecret string, frontend *url.URL) http.Handler {
+// The API lives under /api; webhooks, health, and metrics stay at the root.
+// ui serves the embedded frontend for all remaining paths (root-level API
+// paths would collide with UI page paths like /applications). A nil ui
+// leaves non-API paths unrouted, which tests use.
+func NewRouter(h *Handler, apiKey, jwtSecret string, ui http.Handler) http.Handler {
 	r := chi.NewRouter()
 	r.Use(RecoverMiddleware)
 	r.Use(LoggingMiddleware)
@@ -29,20 +26,15 @@ func NewRouter(h *Handler, apiKey, jwtSecret string, frontend *url.URL) http.Han
 		registerAPIRoutes(api, h, apiKey, jwtSecret)
 	})
 
-	if frontend == nil {
-		registerAPIRoutes(r, h, apiKey, jwtSecret)
-		return r
+	if ui != nil {
+		r.NotFound(ui.ServeHTTP)
 	}
-
-	proxy := httputil.NewSingleHostReverseProxy(frontend)
-	// Flush every write so proxied SSE streams reach the browser immediately.
-	proxy.FlushInterval = -1
-	r.NotFound(proxy.ServeHTTP)
 	return r
 }
 
 func registerAPIRoutes(r chi.Router, h *Handler, apiKey, jwtSecret string) {
 	r.Post("/auth/login", h.Login)
+	r.Post("/auth/logout", h.Logout)
 	r.Get("/setup", h.GetSetupStatus)
 	r.Post("/setup", h.Setup)
 

@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
-	import { replaceState } from '$app/navigation';
+	import { invalidateAll, replaceState } from '$app/navigation';
 	import { page } from '$app/stores';
-	import type { PageData, ActionData } from './$types';
+	import type { PageData } from './$types';
+	import type { User, Group } from '$lib/types';
+	import { api } from '$lib/api';
 	import { fmtDateOnly } from '$lib/format';
 
-	let { data, form }: { data: PageData; form: ActionData } = $props();
+	let { data }: { data: PageData } = $props();
 	const { users, groups, user: me } = $derived(data);
 
 	let tab = $state<'users' | 'groups'>(
@@ -14,6 +15,8 @@
 	let showUserForm = $state(false);
 	let showGroupForm = $state(false);
 	let resetPasswordFor = $state<string | null>(null);
+	let error = $state('');
+	let errorTab = $state<'users' | 'groups'>('users');
 
 	// Keep the tab in the URL so refresh and links (e.g. the group detail
 	// breadcrumb) land on the right one.
@@ -22,12 +25,100 @@
 		replaceState(t === 'groups' ? '?tab=groups' : '?tab=users', {});
 	}
 
-	$effect(() => {
-		if (form?.error) {
-			if (form.tab === 'groups') { tab = 'groups'; showGroupForm = true; }
-			else { tab = 'users'; showUserForm = true; }
+	function showError(msg: string, t: 'users' | 'groups') {
+		error = msg;
+		errorTab = t;
+		tab = t;
+		if (t === 'groups') showGroupForm = true;
+		else showUserForm = true;
+	}
+
+	async function createUser(e: SubmitEvent) {
+		e.preventDefault();
+		error = '';
+		const form = e.currentTarget as HTMLFormElement;
+		const fd = new FormData(form);
+		const email = fd.get('email')?.toString().trim() ?? '';
+		const password = fd.get('password')?.toString() ?? '';
+		if (!email || !password) {
+			showError('Email and password are required', 'users');
+			return;
 		}
-	});
+		try {
+			await api.users.create(email, password);
+			form.reset();
+			await invalidateAll();
+		} catch (err: unknown) {
+			showError(err instanceof Error ? err.message : 'Failed to create user', 'users');
+		}
+	}
+
+	async function setAdmin(user: User) {
+		error = '';
+		try {
+			await api.users.setAdmin(user.ID, !user.IsAdmin);
+			await invalidateAll();
+		} catch (err: unknown) {
+			showError(err instanceof Error ? err.message : 'Failed to update admin rights', 'users');
+		}
+	}
+
+	async function deleteUser(user: User) {
+		if (!confirm(`Delete user "${user.Email}"?`)) return;
+		error = '';
+		try {
+			await api.users.delete(user.ID);
+			await invalidateAll();
+		} catch (err: unknown) {
+			showError(err instanceof Error ? err.message : 'Failed to delete user', 'users');
+		}
+	}
+
+	async function resetPassword(e: SubmitEvent, userId: string) {
+		e.preventDefault();
+		error = '';
+		const fd = new FormData(e.currentTarget as HTMLFormElement);
+		const newPassword = fd.get('newPassword')?.toString() ?? '';
+		if (!newPassword || newPassword.length < 8) {
+			showError('Password must be at least 8 characters', 'users');
+			return;
+		}
+		try {
+			await api.users.resetPassword(userId, newPassword);
+			resetPasswordFor = null;
+		} catch (err: unknown) {
+			showError(err instanceof Error ? err.message : 'Failed to reset password', 'users');
+		}
+	}
+
+	async function createGroup(e: SubmitEvent) {
+		e.preventDefault();
+		error = '';
+		const form = e.currentTarget as HTMLFormElement;
+		const name = new FormData(form).get('name')?.toString().trim() ?? '';
+		if (!name) {
+			showError('Name is required', 'groups');
+			return;
+		}
+		try {
+			await api.groups.create(name);
+			form.reset();
+			await invalidateAll();
+		} catch {
+			showError('Failed to create group', 'groups');
+		}
+	}
+
+	async function deleteGroup(group: Group) {
+		if (!confirm(`Delete group "${group.Name}"?`)) return;
+		error = '';
+		try {
+			await api.groups.delete(group.ID);
+			await invalidateAll();
+		} catch {
+			showError('Failed to delete group', 'groups');
+		}
+	}
 </script>
 
 <svelte:head><title>Team - Bifrost</title></svelte:head>
@@ -68,10 +159,10 @@
 		{#if showUserForm}
 			<div class="mb-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5">
 				<h2 class="mb-4 text-sm font-medium text-zinc-500 dark:text-zinc-400">New user</h2>
-				{#if form?.error && form.tab === 'users'}
-					<div class="mb-3 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">{form.error}</div>
+				{#if error && errorTab === 'users'}
+					<div class="mb-3 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">{error}</div>
 				{/if}
-				<form method="POST" action="?/createUser" use:enhance class="flex flex-col gap-3 sm:flex-row sm:items-end">
+				<form onsubmit={createUser} class="flex flex-col gap-3 sm:flex-row sm:items-end">
 					<div class="flex-1">
 						<label for="email" class="mb-1.5 block text-xs text-zinc-400 dark:text-zinc-500">Email</label>
 						<input id="email" name="email" type="email" required
@@ -127,13 +218,9 @@
 								<td class="px-4 py-3 text-xs text-zinc-400 dark:text-zinc-500">{fmtDateOnly(user.CreatedAt)}</td>
 								<td class="px-4 py-3 text-right whitespace-nowrap">
 									{#if !isSelf}
-										<form method="POST" action="?/setAdmin" use:enhance class="inline">
-											<input type="hidden" name="userId" value={user.ID} />
-											<input type="hidden" name="isAdmin" value={user.IsAdmin ? 'false' : 'true'} />
-											<button type="submit" class="mr-3 text-xs text-zinc-400 dark:text-zinc-600 transition-colors hover:text-zinc-700 dark:hover:text-zinc-300">
-												{user.IsAdmin ? 'Remove admin' : 'Make admin'}
-											</button>
-										</form>
+										<button type="button" onclick={() => setAdmin(user)} class="mr-3 text-xs text-zinc-400 dark:text-zinc-600 transition-colors hover:text-zinc-700 dark:hover:text-zinc-300">
+											{user.IsAdmin ? 'Remove admin' : 'Make admin'}
+										</button>
 										<button
 											type="button"
 											onclick={() => resetPasswordFor = resetPasswordFor === user.ID ? null : user.ID}
@@ -141,28 +228,17 @@
 										>
 											Reset password
 										</button>
-										<form method="POST" action="?/deleteUser" use:enhance={({ cancel }) => {
-											if (!confirm(`Delete user "${user.Email}"?`)) cancel();
-										}} class="inline">
-											<input type="hidden" name="userId" value={user.ID} />
-											<button type="submit" class="ml-3 text-xs text-zinc-400 dark:text-zinc-600 transition-colors hover:text-red-400">Delete</button>
-										</form>
+										<button type="button" onclick={() => deleteUser(user)} class="ml-3 text-xs text-zinc-400 dark:text-zinc-600 transition-colors hover:text-red-400">Delete</button>
 									{/if}
 								</td>
 							</tr>
 							{#if resetPasswordFor === user.ID}
 								<tr class="bg-zinc-50/60 dark:bg-zinc-800/30">
 									<td colspan="3" class="px-4 py-3">
-										{#if form?.error && form.tab === 'users'}
-											<div class="mb-2 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">{form.error}</div>
+										{#if error && errorTab === 'users'}
+											<div class="mb-2 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">{error}</div>
 										{/if}
-										<form method="POST" action="?/resetPassword" use:enhance={() => {
-											return async ({ result, update }) => {
-												if (result.type !== 'failure') resetPasswordFor = null;
-												await update();
-											};
-										}} class="flex items-center gap-2">
-											<input type="hidden" name="userId" value={user.ID} />
+										<form onsubmit={(e) => resetPassword(e, user.ID)} class="flex items-center gap-2">
 											<input
 												name="newPassword"
 												type="password"
@@ -201,10 +277,10 @@
 		{#if showGroupForm}
 			<div class="mb-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5">
 				<h2 class="mb-4 text-sm font-medium text-zinc-500 dark:text-zinc-400">New group</h2>
-				{#if form?.error && form.tab === 'groups'}
-					<div class="mb-3 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">{form.error}</div>
+				{#if error && errorTab === 'groups'}
+					<div class="mb-3 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">{error}</div>
 				{/if}
-				<form method="POST" action="?/createGroup" use:enhance class="flex gap-3">
+				<form onsubmit={createGroup} class="flex gap-3">
 					<input name="name" type="text" placeholder="Group name" required
 						class="flex-1 rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-600 focus:border-brand-500 focus:outline-none" />
 					<button type="submit"
@@ -226,12 +302,7 @@
 						<a href="/groups/{group.ID}" class="text-sm font-medium text-zinc-800 dark:text-zinc-200 hover:text-zinc-900 dark:hover:text-white transition-colors">
 							{group.Name}
 						</a>
-						<form method="POST" action="?/deleteGroup" use:enhance={({ cancel }) => {
-							if (!confirm(`Delete group "${group.Name}"?`)) cancel();
-						}}>
-							<input type="hidden" name="groupId" value={group.ID} />
-							<button type="submit" class="text-xs text-zinc-400 dark:text-zinc-600 transition-colors hover:text-red-400">Delete</button>
-						</form>
+						<button type="button" onclick={() => deleteGroup(group)} class="text-xs text-zinc-400 dark:text-zinc-600 transition-colors hover:text-red-400">Delete</button>
 					</div>
 				{/each}
 			</div>

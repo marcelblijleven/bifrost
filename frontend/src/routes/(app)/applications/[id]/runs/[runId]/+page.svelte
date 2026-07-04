@@ -1,17 +1,75 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
-	import type { PageData, ActionData } from './$types';
+	import type { PageData } from './$types';
 	import type { StepResult, ApprovalRequest } from '$lib/types';
+	import { api } from '$lib/api';
 	import RunStatusBadge from '$lib/components/RunStatusBadge.svelte';
 	import { fmtDateTime, fmtDurationBetween } from '$lib/format';
 
-	let { data, form }: { data: PageData; form: ActionData } = $props();
+	let { data }: { data: PageData } = $props();
 
 	const { run, steps, approvals, appId, application } = $derived(data);
 
 	// Step index whose override-reason form is open, or null.
 	let overrideFor = $state<number | null>(null);
+	let actionError = $state('');
+
+	async function cancelRun() {
+		actionError = '';
+		try {
+			await api.runs.cancel(run.ID);
+			await invalidateAll();
+		} catch {
+			actionError = 'Failed to cancel run';
+		}
+	}
+
+	async function retryStep(stepIndex: number) {
+		actionError = '';
+		try {
+			await api.runs.retryStep(run.ID, stepIndex);
+			await invalidateAll();
+		} catch {
+			actionError = 'Failed to retry step';
+		}
+	}
+
+	async function overrideStep(e: SubmitEvent, stepIndex: number) {
+		e.preventDefault();
+		actionError = '';
+		const reason = new FormData(e.currentTarget as HTMLFormElement).get('reason')?.toString().trim() ?? '';
+		if (!reason) {
+			actionError = 'A reason is required to override a failed step';
+			return;
+		}
+		try {
+			await api.runs.overrideStep(run.ID, stepIndex, reason);
+			overrideFor = null;
+			await invalidateAll();
+		} catch {
+			actionError = 'Failed to override step';
+		}
+	}
+
+	async function approveStep(stepIndex: number) {
+		actionError = '';
+		try {
+			await api.runs.approve(run.ID, stepIndex, data.user?.email);
+			await invalidateAll();
+		} catch {
+			actionError = 'Failed to approve step';
+		}
+	}
+
+	async function rejectStep(stepIndex: number) {
+		actionError = '';
+		try {
+			await api.runs.reject(run.ID, stepIndex, data.user?.email);
+			await invalidateAll();
+		} catch {
+			actionError = 'Failed to reject step';
+		}
+	}
 
 	function githubActionsUrl(externalRunID: number): string {
 		if (!application) return '';
@@ -42,7 +100,9 @@
 	$effect(() => {
 		if (TERMINAL.has(run.Status)) return;
 
-		const es = new EventSource(`/applications/${appId}/runs/${run.ID}/events`);
+		// Same-origin: the browser sends the session cookie automatically,
+		// which is the only way to authenticate EventSource (no headers).
+		const es = new EventSource(`/api/runs/${run.ID}/events`);
 
 		// Refetch on (re)connect so nothing is missed while disconnected. Errors
 		// are left to EventSource's built-in retry — closing here would silently
@@ -129,14 +189,13 @@
 			</div>
 			<div class="flex shrink-0 items-start gap-3">
 				{#if run.Status === 'pending' || run.Status === 'running'}
-					<form method="POST" action="?/cancel" use:enhance>
-						<button
-							type="submit"
-							class="rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400 transition-colors hover:border-red-700/60 hover:text-red-400"
-						>
-							Cancel run
-						</button>
-					</form>
+					<button
+						type="button"
+						onclick={cancelRun}
+						class="rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400 transition-colors hover:border-red-700/60 hover:text-red-400"
+					>
+						Cancel run
+					</button>
 				{/if}
 				<div class="text-right text-xs text-zinc-400 dark:text-zinc-500">
 					<p>Duration: {fmtDurationBetween(run.StartedAt, run.CompletedAt)}</p>
@@ -249,20 +308,17 @@
 										Override & continue
 									</button>
 								{/if}
-								<form method="POST" action="?/retry" use:enhance>
-									<input type="hidden" name="stepIndex" value={step.StepIndex} />
-									<button
-										type="submit"
-										class="rounded-md bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-500"
-									>
-										Retry
-									</button>
-								</form>
+								<button
+									type="button"
+									onclick={() => retryStep(step.StepIndex)}
+									class="rounded-md bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-500"
+								>
+									Retry
+								</button>
 							</div>
 
 							{#if overrideFor === step.StepIndex}
-								<form method="POST" action="?/override" use:enhance class="mt-2 rounded-lg border border-amber-500/40 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/30 p-3">
-									<input type="hidden" name="stepIndex" value={step.StepIndex} />
+								<form onsubmit={(e) => overrideStep(e, step.StepIndex)} class="mt-2 rounded-lg border border-amber-500/40 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/30 p-3">
 									<label class="mb-1 block text-xs font-medium text-amber-700 dark:text-amber-400" for="override-reason-{step.StepIndex}">
 										Why is it safe to continue past this failure?
 									</label>
@@ -277,8 +333,8 @@
 									<p class="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
 										The pipeline resumes from the next step. Your name and this reason are recorded on the run for the audit trail.
 									</p>
-									{#if form?.error}
-										<p class="mt-1 text-xs text-red-500">{form.error}</p>
+									{#if actionError}
+										<p class="mt-1 text-xs text-red-500">{actionError}</p>
 									{/if}
 									<div class="mt-2 flex justify-end gap-2">
 										<button
@@ -308,24 +364,20 @@
 										<p class="mb-3 text-xs text-zinc-500 dark:text-zinc-400">{pendingApproval.Message}</p>
 									{/if}
 									<div class="flex gap-2">
-										<form method="POST" action="?/approve" use:enhance>
-											<input type="hidden" name="stepIndex" value={step.StepIndex} />
-											<button
-												type="submit"
-												class="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600"
-											>
-												Approve
-											</button>
-										</form>
-										<form method="POST" action="?/reject" use:enhance>
-											<input type="hidden" name="stepIndex" value={step.StepIndex} />
-											<button
-												type="submit"
-												class="rounded-md bg-red-800 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700"
-											>
-												Reject
-											</button>
-										</form>
+										<button
+											type="button"
+											onclick={() => approveStep(step.StepIndex)}
+											class="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600"
+										>
+											Approve
+										</button>
+										<button
+											type="button"
+											onclick={() => rejectStep(step.StepIndex)}
+											class="rounded-md bg-red-800 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700"
+										>
+											Reject
+										</button>
 									</div>
 								</div>
 							{:else if pendingApproval.Status === 'superseded'}

@@ -1,6 +1,6 @@
 # API reference
 
-All endpoints are at the server root (no `/api` prefix). Most require a JWT bearer token obtained from the login endpoint.
+All endpoints are served under the `/api` prefix (e.g. `https://bifrost.example.com/api/auth/login`); the paths below omit it. Webhooks (`/webhooks/<provider>`), health (`/healthz`), and metrics (`/metrics`) stay at the server root. Most endpoints require a JWT bearer token obtained from the login endpoint.
 
 ## Authentication
 
@@ -10,13 +10,17 @@ All endpoints are at the server root (no `/api` prefix). Most require a JWT bear
 { "email": "admin@example.com", "password": "secret" }
 ```
 
-Returns `{ "token": "<jwt>" }`. Include this token in subsequent requests:
+Returns `{ "token": "<jwt>" }` and also sets the same JWT as an httpOnly session cookie (used by the web UI). API clients include the token in subsequent requests:
 
 ```
 Authorization: Bearer <token>
 ```
 
 Failed attempts are rate-limited per email and per source IP: 5 failures within 5 minutes locks that email/IP out for 5 minutes. A locked-out request gets `429 Too Many Requests` with a `Retry-After` header (seconds).
+
+### POST /auth/logout
+
+Clears the session cookie. The JWT itself remains valid until it expires. No authentication required.
 
 ### PUT /auth/password
 
