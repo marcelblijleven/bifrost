@@ -36,6 +36,12 @@ type SkipConditions struct {
 	// PathsInclude skips the run when NO changed files match any pattern.
 	// Use this to run the pipeline only for changes in specific directories.
 	PathsInclude []string `json:"paths_include,omitempty"`
+	// SkipBackfill, when true, disables backfilling runs for commits that were
+	// skipped by a missed webhook. Bifrost then syncs straight to the pushed
+	// head (the pre-backfill behaviour) instead of creating a run per missed
+	// commit. Missed commits are still covered by the pushed head's run, whose
+	// changelog derives from commits since the last tag.
+	SkipBackfill bool `json:"skip_backfill,omitempty"`
 }
 
 // RunFilter narrows ListPipelineRuns results. Empty strings mean no filter.

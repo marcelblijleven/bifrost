@@ -65,12 +65,14 @@ func (s *lineageStore) GetApplication(_ context.Context, _ uuid.UUID) (*store.Ap
 	return s.app, nil
 }
 
-// lineageProvider implements only CompareCommits and GetBranchHead.
+// lineageProvider implements only CompareCommits, GetBranchHead and
+// ListCommitsSince.
 type lineageProvider struct {
 	provider.Provider
 
 	compare    func(base, head string) (provider.CompareStatus, error)
 	branchHead string
+	commits    []provider.Commit // returned by ListCommitsSince (oldest-first, head last)
 }
 
 func (p *lineageProvider) CompareCommits(_ context.Context, _, _, base, head string) (provider.CompareStatus, error) {
@@ -78,6 +80,10 @@ func (p *lineageProvider) CompareCommits(_ context.Context, _, _, base, head str
 		return p.compare(base, head)
 	}
 	return "", errors.New("unexpected CompareCommits call")
+}
+
+func (p *lineageProvider) ListCommitsSince(_ context.Context, _, _, _, _ string) ([]provider.Commit, error) {
+	return p.commits, nil
 }
 
 func (p *lineageProvider) GetBranchHead(_ context.Context, _, _, _ string) (string, error) {
@@ -169,7 +175,7 @@ func TestLineage_ForcedPush_Blocks(t *testing.T) {
 	}
 }
 
-func TestLineage_MismatchAhead_SyncsOverMissedPushes(t *testing.T) {
+func TestLineage_MismatchAhead_BackfillsMissedCommits(t *testing.T) {
 	st := &lineageStore{app: lineageApp("aaa")}
 	prov := &lineageProvider{
 		compare: func(base, head string) (provider.CompareStatus, error) {
@@ -178,6 +184,11 @@ func TestLineage_MismatchAhead_SyncsOverMissedPushes(t *testing.T) {
 			}
 			return provider.CompareAhead, nil
 		},
+		// ListCommitsSince returns commits oldest-first with the head last.
+		commits: []provider.Commit{
+			{SHA: "bbb", Message: "commit b", Author: "dev"},
+			{SHA: "ccc", Message: "commit c", Author: "dev"},
+		},
 	}
 	h := newLineageHandler(st, prov)
 
@@ -185,10 +196,69 @@ func TestLineage_MismatchAhead_SyncsOverMissedPushes(t *testing.T) {
 	// the aaa→bbb push (missed delivery).
 	proceed, _, _ := h.processLineage(t.Context(), st.app, prov, pushEvent("bbb", "ccc"))
 	if !proceed {
-		t.Fatal("expected lineage to sync over missed pushes")
+		t.Fatal("expected lineage to allow the pushed head's run")
 	}
 	if st.app.LastKnownSHA != "ccc" {
 		t.Errorf("head = %q, want ccc", st.app.LastKnownSHA)
+	}
+	// The missed commit bbb must be backfilled as a pending run chained onto
+	// the previously known head; the pushed head ccc is left to the caller.
+	if len(st.createdRuns) != 1 {
+		t.Fatalf("expected one backfilled run, got %d: %+v", len(st.createdRuns), st.createdRuns)
+	}
+	got := st.createdRuns[0]
+	if got.CommitSHA != "bbb" || got.ParentSHA != "aaa" || got.Status != "pending" {
+		t.Errorf("backfilled run = {sha:%q parent:%q status:%q}, want {bbb aaa pending}",
+			got.CommitSHA, got.ParentSHA, got.Status)
+	}
+}
+
+func TestLineage_MismatchAhead_BacklogExceedsCap_NoBackfill(t *testing.T) {
+	st := &lineageStore{app: lineageApp("aaa")}
+	commits := make([]provider.Commit, 0, maxBackfillCommits+2)
+	for i := 0; i < maxBackfillCommits+1; i++ {
+		commits = append(commits, provider.Commit{SHA: fmt.Sprintf("m%d", i)})
+	}
+	commits = append(commits, provider.Commit{SHA: "ccc"}) // pushed head, last
+	prov := &lineageProvider{
+		compare: func(_, _ string) (provider.CompareStatus, error) { return provider.CompareAhead, nil },
+		commits: commits,
+	}
+	h := newLineageHandler(st, prov)
+
+	proceed, _, _ := h.processLineage(t.Context(), st.app, prov, pushEvent("bbb", "ccc"))
+	if !proceed {
+		t.Fatal("expected lineage to still advance to the pushed head")
+	}
+	if st.app.LastKnownSHA != "ccc" {
+		t.Errorf("head = %q, want ccc", st.app.LastKnownSHA)
+	}
+	if len(st.createdRuns) != 0 {
+		t.Errorf("expected no backfill beyond the cap, got %d runs", len(st.createdRuns))
+	}
+}
+
+func TestLineage_MismatchAhead_SkipBackfill_SyncsToHead(t *testing.T) {
+	st := &lineageStore{app: lineageApp("aaa")}
+	st.app.SkipConditions.SkipBackfill = true
+	prov := &lineageProvider{
+		compare: func(_, _ string) (provider.CompareStatus, error) { return provider.CompareAhead, nil },
+		commits: []provider.Commit{
+			{SHA: "bbb", Message: "commit b"},
+			{SHA: "ccc", Message: "commit c"},
+		},
+	}
+	h := newLineageHandler(st, prov)
+
+	proceed, _, _ := h.processLineage(t.Context(), st.app, prov, pushEvent("bbb", "ccc"))
+	if !proceed {
+		t.Fatal("expected lineage to sync to the pushed head")
+	}
+	if st.app.LastKnownSHA != "ccc" {
+		t.Errorf("head = %q, want ccc", st.app.LastKnownSHA)
+	}
+	if len(st.createdRuns) != 0 {
+		t.Errorf("SkipBackfill must suppress backfilled runs, got %d", len(st.createdRuns))
 	}
 }
 

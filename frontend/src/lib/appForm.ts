@@ -1,4 +1,5 @@
 /** Form-data parsers shared by the application create and edit actions. */
+import type { SkipConditions } from '$lib/types';
 
 /** Parses the trigger fields emitted by TriggerFields.svelte. */
 export function parseTrigger(data: FormData): {
@@ -37,8 +38,8 @@ export function parseNotifications(data: FormData): Record<string, unknown> {
 }
 
 /** Parses the skip-condition hidden fields emitted by SkipConditionsFields.svelte. */
-export function parseSkipConditions(data: FormData): Record<string, string[]> {
-	const skipConditions: Record<string, string[]> = {};
+export function parseSkipConditions(data: FormData): SkipConditions {
+	const skipConditions: SkipConditions = {};
 	try {
 		const commitPatterns: string[] = JSON.parse((data.get('skip_commit_patterns') as string) ?? '[]');
 		const pathsIgnore: string[] = JSON.parse((data.get('skip_paths_ignore') as string) ?? '[]');
@@ -46,6 +47,7 @@ export function parseSkipConditions(data: FormData): Record<string, string[]> {
 		if (commitPatterns.length) skipConditions.commit_patterns = commitPatterns;
 		if (pathsIgnore.length) skipConditions.paths_ignore = pathsIgnore;
 		if (pathsInclude.length) skipConditions.paths_include = pathsInclude;
+		if (data.get('skip_backfill') === 'true') skipConditions.skip_backfill = true;
 	} catch {
 		/* ignore parse errors, send empty */
 	}

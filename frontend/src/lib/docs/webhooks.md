@@ -59,7 +59,7 @@ Only one run per application executes at a time. New runs are queued while a run
 
 Bifrost tracks the head of each application's release branch. Every push must chain onto the last head Bifrost saw (the webhook's `before` field). This works for all merge styles — direct pushes, merge commits, squash merges, and rebase merges all fast-forward the branch.
 
-- **Missed webhooks** (e.g. Bifrost was down): if the pushed head still fast-forwards the last known head, Bifrost syncs automatically and the release includes the missed commits.
+- **Missed webhooks** (e.g. Bifrost was down): if the pushed head still fast-forwards the last known head, Bifrost backfills a run for each commit whose webhook was missed, oldest first, so none are skipped. These runs execute in commit order ahead of the pushed head's own run. Set `skip_backfill` in the application's skip conditions to disable this and sync straight to the pushed head instead (the missed commits are then covered by that head's run).
 - **Force push / history rewrite**: the application is **blocked**. New runs are paused and queued runs are cancelled, because releases could otherwise reference commits that no longer exist. The application page shows the reason plus recovery steps; after verifying the rewrite was intentional, click **Accept current head** (optionally **Accept & run pipeline**) to re-baseline and resume. Via the API:
 
 ```bash
