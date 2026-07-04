@@ -1,15 +1,33 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
-	import { enhance } from '$app/forms';
-	import type { PageData, ActionData } from './$types';
+	import { goto, invalidateAll } from '$app/navigation';
+	import type { PageData } from './$types';
+	import { api } from '$lib/api';
 	import RunStatusBadge from '$lib/components/RunStatusBadge.svelte';
 	import { fmtDateTime, fmtDurationBetween } from '$lib/format';
 
-	let { data, form }: { data: PageData; form: ActionData } = $props();
+	let { data }: { data: PageData } = $props();
 
 	const { application, runs, page, limit, status, branch } = $derived(data);
 
 	let accepting = $state(false);
+	let acceptError = $state('');
+
+	async function acceptHead(triggerRun: boolean) {
+		accepting = true;
+		acceptError = '';
+		try {
+			const res = await api.applications.acceptHead(application.ID, triggerRun);
+			if (res.run_id) {
+				await goto(`/applications/${application.ID}/runs/${res.run_id}`);
+				return;
+			}
+			await invalidateAll();
+		} catch {
+			acceptError = 'Failed to accept the current branch head';
+		} finally {
+			accepting = false;
+		}
+	}
 
 	let filterStatus = $state(status);
 	let filterBranch = $state(branch);
@@ -84,36 +102,26 @@
 						<li>Verify existing release tags still point at commits reachable from the branch.</li>
 						<li>Accept the branch's current head below to resume releases from it.</li>
 					</ol>
-					{#if form?.error}
-						<p class="mt-3 text-sm text-rose-600 dark:text-rose-400">{form.error}</p>
+					{#if acceptError}
+						<p class="mt-3 text-sm text-rose-600 dark:text-rose-400">{acceptError}</p>
 					{/if}
 					<div class="mt-4 flex flex-wrap gap-2">
-						<form method="POST" action="?/acceptHead" use:enhance={() => {
-							accepting = true;
-							return async ({ update }) => { accepting = false; await update(); };
-						}}>
-							<input type="hidden" name="triggerRun" value="false" />
-							<button
-								type="submit"
-								disabled={accepting}
-								class="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-600 dark:text-rose-400 transition-colors hover:bg-rose-500/20 disabled:pointer-events-none disabled:opacity-40"
-							>
-								Accept current head
-							</button>
-						</form>
-						<form method="POST" action="?/acceptHead" use:enhance={() => {
-							accepting = true;
-							return async ({ update }) => { accepting = false; await update(); };
-						}}>
-							<input type="hidden" name="triggerRun" value="true" />
-							<button
-								type="submit"
-								disabled={accepting}
-								class="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-600 dark:text-rose-400 transition-colors hover:bg-rose-500/20 disabled:pointer-events-none disabled:opacity-40"
-							>
-								Accept &amp; run pipeline
-							</button>
-						</form>
+						<button
+							type="button"
+							onclick={() => acceptHead(false)}
+							disabled={accepting}
+							class="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-600 dark:text-rose-400 transition-colors hover:bg-rose-500/20 disabled:pointer-events-none disabled:opacity-40"
+						>
+							Accept current head
+						</button>
+						<button
+							type="button"
+							onclick={() => acceptHead(true)}
+							disabled={accepting}
+							class="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-600 dark:text-rose-400 transition-colors hover:bg-rose-500/20 disabled:pointer-events-none disabled:opacity-40"
+						>
+							Accept &amp; run pipeline
+						</button>
 					</div>
 				</div>
 			</div>

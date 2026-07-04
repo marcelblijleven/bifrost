@@ -4,12 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/marcelblijleven/bifrost/frontend"
 	"github.com/marcelblijleven/bifrost/internal/api"
 	"github.com/marcelblijleven/bifrost/internal/config"
 	"github.com/marcelblijleven/bifrost/internal/pipeline"
@@ -95,17 +95,7 @@ func main() {
 	h := api.NewHandler(st, providers, reg, cfg.JWTSecret, cfg.PublicURL, broker)
 	h.Start(ctx)
 
-	var frontendURL *url.URL
-	if cfg.FrontendURL != "" {
-		frontendURL, err = url.Parse(cfg.FrontendURL)
-		if err != nil || frontendURL.Scheme == "" || frontendURL.Host == "" {
-			slog.Error("invalid FRONTEND_URL", "value", cfg.FrontendURL, "err", err)
-			os.Exit(1)
-		}
-		slog.Info("single-port mode: proxying non-API paths to frontend", "frontend_url", cfg.FrontendURL)
-	}
-
-	router := api.NewRouter(h, cfg.APIKey, cfg.JWTSecret, frontendURL)
+	router := api.NewRouter(h, cfg.APIKey, cfg.JWTSecret, frontend.Handler())
 
 	srv := &http.Server{
 		Addr:        cfg.HTTPAddr,

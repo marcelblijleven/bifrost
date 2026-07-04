@@ -1,9 +1,11 @@
 <script lang="ts">
   import { page } from '$app/stores'
+  import { goto } from '$app/navigation'
   import { onMount } from 'svelte'
   import type { Snippet } from 'svelte'
   import type { LayoutData } from './$types'
   import { theme } from '$lib/theme'
+  import { api } from '$lib/api'
 
   let { data, children }: { data: LayoutData; children: Snippet } = $props()
 
@@ -19,6 +21,12 @@
   const navItems = $derived(allNavItems.filter(item => !item.adminOnly || data.user?.is_admin))
 
   function closeMenu() { menuOpen = false }
+
+  async function signOut() {
+    // Only the server can clear the httpOnly session cookie
+    await api.auth.logout().catch(() => {})
+    goto('/login')
+  }
 
   onMount(() => theme.init())
 </script>
@@ -116,16 +124,16 @@
         {/if}
       </button>
 
-      <a
-        href="/logout"
-        data-sveltekit-reload
-        class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-zinc-500 dark:text-zinc-400 transition hover:bg-red-50 dark:hover:bg-red-950/40 hover:text-red-500 dark:hover:text-red-400"
+      <button
+        type="button"
+        onclick={signOut}
+        class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-zinc-500 dark:text-zinc-400 transition hover:bg-red-50 dark:hover:bg-red-950/40 hover:text-red-500 dark:hover:text-red-400"
       >
         <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75" />
         </svg>
         Sign out
-      </a>
+      </button>
     </div>
   </aside>
 

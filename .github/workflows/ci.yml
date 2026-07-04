@@ -22,9 +22,11 @@ jobs:
       - name: Test
         run: go test ./...
 
+      # Compile check only: the UI is not built in this job, so the binary
+      # embeds an empty build dir. The docker job builds the full image.
       - name: Build
         run: |
-          make build
+          make build-server
           make build-cli
 
   frontend:

@@ -401,7 +401,8 @@ func doRequest(t *testing.T, handler http.Handler, method, path string, body any
 			t.Fatalf("encode body: %v", err)
 		}
 	}
-	req := httptest.NewRequest(method, path, &buf)
+	// The API is served under /api; test cases name the resource path.
+	req := httptest.NewRequest(method, "/api"+path, &buf)
 	req.Header.Set("Content-Type", "application/json")
 	if authHdr != "" {
 		req.Header.Set("Authorization", authHdr)

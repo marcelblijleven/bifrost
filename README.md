@@ -34,8 +34,7 @@ On first visit you are redirected to `/setup` to create the admin account.
 | `JWT_SECRET` | Yes | 32+ char random string, e.g. `openssl rand -hex 32` |
 | `API_KEY` | Yes | Static key for management API calls |
 | `HTTP_ADDR` | No | Listen address (default `:8080`) |
-| `PUBLIC_URL` | No | Externally reachable URL of this instance; required for the "Install webhook" button |
-| `FRONTEND_URL` | No | Single-port mode: URL of the SvelteKit SSR server (e.g. `http://127.0.0.1:3000`). When set, the Go server proxies all non-API paths there and serves the API under `/api` only |
+| `PUBLIC_URL` | No | Externally reachable URL of this instance; required for the "Install webhook" button, and when it starts with `https://` session cookies are marked `Secure` |
 | `GITHUB_TOKEN` | * | Personal access token (`repo` + `workflow` scopes) |
 | `GITHUB_APP_ID` | * | GitHub App ID (takes priority over token) |
 | `GITHUB_INSTALLATION_ID` | * | GitHub App installation ID |
@@ -57,7 +56,8 @@ On first visit you are redirected to `/setup` to create the admin account.
 | `make dev-backend` | Backend only with air hot reload |
 | `make dev-frontend` | Frontend only (`pnpm dev`) |
 | `make run` | Run the backend without hot reload |
-| `make build` | Build `bin/bifrost` |
+| `make build` | Build `bin/bifrost` (builds and embeds the frontend) |
+| `make build-server` | Build `bin/bifrost` without rebuilding the frontend |
 | `make build-cli` | Build `bin/bifrost-cli` |
 | `make test` | Run all Go tests |
 | `make lint` | Run golangci-lint |
@@ -197,13 +197,12 @@ On every push to `main`, Bifrost computes the next version, generates the change
 
 ## Docker
 
-A single `Dockerfile` builds everything, and the default image exposes a single port. The Go server owns port 8080 and serves the web UI (reverse-proxied to the in-container SvelteKit server), the JSON API under `/api`, webhooks, health, and metrics:
+A single `Dockerfile` builds everything into one Go binary with the web UI embedded. The server owns port 8080 and serves the UI, the JSON API under `/api`, webhooks, health, and metrics:
 
 ```bash
 docker run -d \
   -e DATABASE_URL=postgres://... \
   -e JWT_SECRET=... -e API_KEY=... \
-  -e ORIGIN=https://bifrost.example.com \
   -e PUBLIC_URL=https://bifrost.example.com \
   -e GITHUB_TOKEN=... \
   -p 8080:8080 \
@@ -216,7 +215,7 @@ Or run the full stack (Postgres included) with the production compose file:
 BIFROST_VERSION=0.2.0 docker compose -f docker-compose.prod.yml up -d
 ```
 
-Point your TLS-terminating proxy at port 8080; no path-based routing needed. The CLI targets the same port: `BIFROST_URL=https://bifrost.example.com/api`. For split deployments the same Dockerfile provides `--target api` and `--target web` stages.
+Point your TLS-terminating proxy at port 8080; no path-based routing needed. The CLI targets the same port: `BIFROST_URL=https://bifrost.example.com`.
 
 ## Production
 
@@ -225,7 +224,7 @@ See the [Production deployment guide](frontend/src/lib/docs/deployment.md) for a
 ## Architecture
 
 - **Backend**: Go, `net/http` + chi router, pgx/v5, goose migrations
-- **Frontend**: SvelteKit (SSR + Svelte 5 runes), Tailwind CSS v3, Biome
+- **Frontend**: SvelteKit (static SPA + Svelte 5 runes) embedded in the Go binary, Tailwind CSS v3, Biome
 - **Database**: PostgreSQL with Row-Level Security
 - **Metrics**: Prometheus (`/metrics`), health check (`/healthz`)
 - **Streaming**: Server-Sent Events for live run progress

@@ -2,7 +2,7 @@
 #
 #   BIFROST_VERSION=0.2.0 docker compose -f docker-compose.prod.yml up -d
 #
-# Set JWT_SECRET, API_KEY, PUBLIC_URL, ORIGIN, and provider credentials in the
+# Set JWT_SECRET, API_KEY, PUBLIC_URL, and provider credentials in the
 # environment or an .env file next to this compose file. Everything (UI, API
 # under /api, webhooks) is served on the single port 8080; point your
 # TLS-terminating proxy at it.
@@ -33,7 +33,6 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       API_KEY: ${API_KEY:?set API_KEY}
       PUBLIC_URL: ${PUBLIC_URL:-}
-      ORIGIN: ${ORIGIN:?set ORIGIN to the public URL of the frontend}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_INSTALLATION_ID: ${GITHUB_INSTALLATION_ID:-}

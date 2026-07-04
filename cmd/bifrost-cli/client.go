@@ -19,8 +19,12 @@ type Client struct {
 }
 
 func newClient(url, token string) *Client {
+	// The API lives under /api on the server; accept URLs with or without
+	// the suffix so both "https://bifrost.example.com" and ".../api" work.
+	base := strings.TrimRight(url, "/")
+	base = strings.TrimSuffix(base, "/api")
 	return &Client{
-		baseURL: strings.TrimRight(url, "/"),
+		baseURL: base + "/api",
 		token:   token,
 		http:    &http.Client{Timeout: 30 * time.Second},
 	}

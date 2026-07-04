@@ -3,11 +3,17 @@ package api
 import (
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/marcelblijleven/bifrost/internal/auth"
 )
+
+// sessionCookie is the httpOnly cookie carrying the browser session JWT.
+// The name predates the single-binary setup (the SvelteKit server used the
+// same one), so existing sessions keep working across the migration.
+const sessionCookie = "token"
 
 // LoggingMiddleware logs method, path, status, and duration for every request.
 func LoggingMiddleware(next http.Handler) http.Handler {
@@ -48,17 +54,24 @@ func APIKeyMiddleware(key string) func(http.Handler) http.Handler {
 	}
 }
 
-// AuthMiddleware accepts either a valid JWT or the static API key.
+// AuthMiddleware accepts either a valid JWT or the static API key, taken
+// from the Authorization header or (for browser sessions) the session cookie.
 // For JWTs it stores the claims in the request context.
 func AuthMiddleware(apiKey, jwtSecret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			raw := r.Header.Get("Authorization")
-			if !strings.HasPrefix(raw, "Bearer ") {
+			token, fromCookie := credentials(r)
+			if token == "" {
 				writeError(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
-			token := strings.TrimPrefix(raw, "Bearer ")
+			// Cookies are attached by the browser to cross-site requests
+			// too, so cookie-authenticated writes need a same-origin check.
+			// Header-based auth is immune to CSRF and skips it.
+			if fromCookie && !sameOriginRequest(r) {
+				writeError(w, http.StatusForbidden, "cross-origin request rejected")
+				return
+			}
 
 			// Static API key — no user identity attached
 			if token == apiKey {
@@ -74,6 +87,42 @@ func AuthMiddleware(apiKey, jwtSecret string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(auth.WithClaims(r.Context(), claims)))
 		})
 	}
+}
+
+// credentials extracts the bearer token from the Authorization header or,
+// failing that, the session cookie. fromCookie reports which source was used.
+func credentials(r *http.Request) (token string, fromCookie bool) {
+	if raw := r.Header.Get("Authorization"); strings.HasPrefix(raw, "Bearer ") {
+		return strings.TrimPrefix(raw, "Bearer "), false
+	}
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		return c.Value, true
+	}
+	return "", false
+}
+
+// sameOriginRequest reports whether a state-changing request originated from
+// our own frontend. Modern browsers send Sec-Fetch-Site on every request and
+// Origin on every non-GET request; a mismatch on either means CSRF.
+func sameOriginRequest(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	// "none" is a direct navigation (e.g. address bar), not an attack vector
+	// for fetch/XHR-style requests.
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+		return false
+	}
+	// Backstop for browsers without Sec-Fetch-Site. "null" (sandboxed
+	// iframes, some redirects) is deliberately rejected.
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		if err != nil || u.Host != r.Host {
+			return false
+		}
+	}
+	return true
 }
 
 // RecoverMiddleware catches panics, logs them, and returns a 500.
