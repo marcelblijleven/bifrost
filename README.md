@@ -4,6 +4,8 @@ Self-hosted release orchestration tool. Watches GitHub, Gitea, and Forgejo repos
 
 Multiple applications can share a single repository (monorepo), each with its own path filters, pipeline, and tag prefix.
 
+Bifrost ships as a single self-contained Go binary with the web UI embedded. In production there is one process on one port and no Node.js runtime: it serves the UI, the JSON API under `/api`, webhooks, health, and metrics.
+
 ## Quick start (development)
 
 ```bash
@@ -15,8 +17,10 @@ make dev
 
 `make dev` installs [air](https://github.com/air-verse/air) if needed, starts Postgres via Docker Compose, and launches the Go backend (hot reload) and Vite frontend simultaneously. Press **Ctrl+C** to stop everything.
 
+- Frontend (open this): http://localhost:5173
 - Backend: http://localhost:8080
-- Frontend: http://localhost:5173
+
+The two-process split is development only: the Vite dev server proxies `/api` to the backend so the browser stays same-origin. A production build collapses both into the single `bin/bifrost` binary (see [Building](#building)).
 
 On first visit you are redirected to `/setup` to create the admin account.
 
@@ -64,6 +68,24 @@ On first visit you are redirected to `/setup` to create the admin account.
 | `make docker-up` | Start Postgres container |
 | `make docker-down` | Stop containers |
 | `make docker-build` | Build the production Docker images locally (`VERSION=1.2.3` to stamp) |
+
+## Building
+
+`make build` compiles a single binary at `bin/bifrost` with the web UI embedded. It builds the frontend first (`frontend/build/`) and embeds it via `go:embed`, so the resulting binary is self-contained:
+
+```bash
+make build            # builds frontend + embeds it + compiles bin/bifrost
+./bin/bifrost         # needs only the env vars below at runtime — no Node, no static files
+```
+
+The frontend and Go steps are decoupled for faster iteration:
+
+- `make frontend-build` rebuilds only the embedded UI (`frontend/build/`).
+- `make build-server` recompiles the binary against whatever is already in `frontend/build/`.
+
+A committed `frontend/build/.gitkeep` lets `make build-server` (and CI's compile check) succeed before the UI has ever been built; that binary simply serves a "frontend not built" notice until you run a real build.
+
+Deploy the binary anywhere with a `DATABASE_URL`: run it behind a TLS-terminating proxy pointed at port 8080. See the [Production deployment guide](frontend/src/lib/docs/deployment.md) for a systemd + nginx walkthrough.
 
 ## Triggers
 
