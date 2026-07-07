@@ -1,6 +1,8 @@
 package api_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -62,6 +64,38 @@ func TestLogin_SetsHttpOnlySessionCookie(t *testing.T) {
 	}
 	if c.SameSite != http.SameSiteStrictMode {
 		t.Errorf("SameSite = %v, want Strict", c.SameSite)
+	}
+}
+
+func TestLogin_SecureFlagTracksRequestScheme(t *testing.T) {
+	st := newHandlerMockStore()
+	hash, _ := bcrypt.GenerateFromPassword([]byte("hunter2"), bcrypt.MinCost)
+	st.users["alice@example.com"] = &store.User{
+		ID:           uuid.New(),
+		Email:        "alice@example.com",
+		PasswordHash: string(hash),
+	}
+	router := newTestRouter(st)
+
+	login := func(setup func(*http.Request)) *http.Cookie {
+		t.Helper()
+		body, _ := json.Marshal(map[string]string{"email": "alice@example.com", "password": "hunter2"})
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		setup(req)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("login status = %d, want 200; body: %s", rr.Code, rr.Body)
+		}
+		return findCookie(rr.Result().Cookies(), sessionCookieName)
+	}
+
+	if c := login(func(*http.Request) {}); c.Secure {
+		t.Error("plain http login: Secure = true, want false")
+	}
+	if c := login(func(r *http.Request) { r.Header.Set("X-Forwarded-Proto", "https") }); !c.Secure {
+		t.Error("proxied https login: Secure = false, want true")
 	}
 }
 

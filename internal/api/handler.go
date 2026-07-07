@@ -1935,12 +1935,6 @@ func (h *Handler) Setup(w http.ResponseWriter, r *http.Request) {
 // sessionTTL bounds both the JWT expiry and the session cookie lifetime.
 const sessionTTL = 24 * time.Hour
 
-// secureCookies reports whether session cookies should carry the Secure
-// flag, derived from the instance being served over HTTPS.
-func (h *Handler) secureCookies() bool {
-	return strings.HasPrefix(h.publicURL, "https://")
-}
-
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email    string `json:"email"`
@@ -1992,7 +1986,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   int(sessionTTL.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   h.secureCookies(),
+		Secure:   requestIsSecure(r),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
@@ -2007,7 +2001,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   h.secureCookies(),
+		Secure:   requestIsSecure(r),
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
