@@ -125,6 +125,22 @@ func sameOriginRequest(r *http.Request) bool {
 	return true
 }
 
+// requestIsSecure reports whether the browser reached this server over HTTPS,
+// from the actual connection or a TLS-terminating proxy's X-Forwarded-Proto,
+// so the Secure cookie flag matches the scheme the browser used.
+func requestIsSecure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		if i := strings.IndexByte(proto, ','); i >= 0 {
+			proto = proto[:i]
+		}
+		return strings.EqualFold(strings.TrimSpace(proto), "https")
+	}
+	return false
+}
+
 // RecoverMiddleware catches panics, logs them, and returns a 500.
 func RecoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
