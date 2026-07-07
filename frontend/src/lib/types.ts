@@ -13,6 +13,7 @@ export interface SkipConditions {
 	commit_patterns?: string[];
 	paths_ignore?: string[];
 	paths_include?: string[];
+	skip_backfill?: boolean;
 }
 
 export interface Application {

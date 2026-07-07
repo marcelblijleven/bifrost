@@ -13,6 +13,7 @@ Configure in the **Edit application → Skip conditions** section, or via the AP
 | `commit_patterns` | Skip if the commit message contains any of these strings (e.g. `[skip ci]`) |
 | `paths_ignore` | Skip if **all** changed files match at least one glob pattern (e.g. `docs/**`, `*.md`) |
 | `paths_include` | Skip if **no** changed files match any pattern - use to run only for changes in specific paths |
+| `skip_backfill` | When a webhook is missed, don't create a run for each skipped commit; sync straight to the latest pushed commit instead |
 
 Glob patterns support `*` (within a path segment), `**` (across segments), and `?`. Examples:
 

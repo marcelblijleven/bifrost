@@ -509,6 +509,15 @@ func (h *Handler) processEventForApp(ctx context.Context, app *store.Application
 		return res
 	}
 
+	res.Status, res.RunID, res.Reason = h.enqueueRunForCommit(ctx, app, event)
+	return res
+}
+
+// enqueueRunForCommit creates a pending pipeline run for a single validated
+// branch push, or records a skipped run when the application's skip conditions
+// match. Commit lineage must already have been validated by the caller. It is
+// shared by the normal webhook path and the missed-commit backfill.
+func (h *Handler) enqueueRunForCommit(ctx context.Context, app *store.Application, event provider.PushEvent) (status, runID, reason string) {
 	if kind, reason := shouldSkip(app.SkipConditions, event); kind != skipNone {
 		slog.Info("skipping pipeline run", "app", app.ID, "reason", reason, "sha", event.CommitSHA)
 		// Path-based skips are routing and would drown the run list; only
@@ -531,8 +540,7 @@ func (h *Handler) processEventForApp(ctx context.Context, app *store.Application
 				slog.Error("create skipped run record", "err", err)
 			}
 		}
-		res.Status, res.Reason = "skipped", reason
-		return res
+		return "skipped", "", reason
 	}
 
 	run := &store.PipelineRun{
@@ -547,11 +555,9 @@ func (h *Handler) processEventForApp(ctx context.Context, app *store.Application
 	}
 	if err := h.store.CreatePipelineRun(ctx, run); err != nil {
 		slog.Error("create pipeline run", "app", app.ID, "err", err)
-		res.Status, res.Reason = "error", "failed to create pipeline run"
-		return res
+		return "error", "", "failed to create pipeline run"
 	}
-	res.Status, res.RunID = "queued", run.ID.String()
-	return res
+	return "queued", run.ID.String(), ""
 }
 
 // processTagTrigger handles a tag push for a tag-triggered application: the
@@ -783,12 +789,21 @@ func (h *Handler) processLineage(ctx context.Context, app *store.Application, pr
 	case provider.CompareAhead:
 		// The pushed head fast-forwards our known head but skipped over
 		// deliveries we never saw (missed webhooks, e.g. bifrost downtime).
-		// Sync to the new head; the release itself is complete because semver
-		// and changelog derive their input from commits since the last tag.
-		slog.Info("lineage: head ahead of known head, syncing over missed pushes",
-			"app", app.ID, "from", shortSHA(app.LastKnownSHA), "to", shortSHA(event.CommitSHA),
+		// Backfill a run for each skipped commit so none are silently lost,
+		// then advance to the pushed head (whose own run the caller creates).
+		// Per-application run serialisation executes the backfilled runs in
+		// commit order ahead of the pushed head's run.
+		base := app.LastKnownSHA
+		slog.Info("lineage: head ahead of known head, backfilling missed pushes",
+			"app", app.ID, "from", shortSHA(base), "to", shortSHA(event.CommitSHA),
 			"claimed_before", shortSHA(event.BeforeSHA))
-		return h.advanceHead(ctx, app, event)
+		proceed, status, reason = h.advanceHead(ctx, app, event)
+		if proceed {
+			// Only backfill once we own the advance; a lost CAS means a
+			// concurrent delivery is covering this range.
+			h.backfillMissedCommits(ctx, app, prov, base, event)
+		}
+		return proceed, status, reason
 	case provider.CompareIdentical, provider.CompareBehind:
 		// Stale, duplicate, or out-of-order delivery: a newer head is already
 		// tracked. Nothing to release.
@@ -820,6 +835,77 @@ func (h *Handler) advanceHead(ctx context.Context, app *store.Application, event
 		return false, "superseded", ""
 	}
 	return true, "", ""
+}
+
+// maxBackfillCommits caps how many missed commits are backfilled from a single
+// delivery. Beyond this (e.g. a long outage) a run per commit is more noise than
+// signal, so we sync straight to the head and let the head's own run cover the
+// range (its changelog derives from commits since the last tag).
+const maxBackfillCommits = 50
+
+// backfillMissedCommits creates a pending run for every commit that landed on
+// the branch between base (the previously known head, exclusive) and the pushed
+// head (exclusive) but whose webhook was never processed. Runs are created
+// oldest-first so per-application serialisation executes them in commit order,
+// ahead of the pushed head's own run. It is best-effort: any failure to
+// enumerate or create leaves the pushed head's run to cover the range, exactly
+// as before this backfill existed.
+func (h *Handler) backfillMissedCommits(ctx context.Context, app *store.Application, prov provider.Provider, base string, event provider.PushEvent) {
+	if app.SkipConditions.SkipBackfill {
+		slog.Info("lineage: backfill disabled for application; syncing to head",
+			"app", app.ID, "from", shortSHA(base), "to", shortSHA(event.CommitSHA))
+		return
+	}
+
+	commits, err := prov.ListCommitsSince(ctx, app.Owner, app.Repo, base, event.CommitSHA)
+	if err != nil {
+		slog.Error("lineage: enumerate missed commits for backfill", "app", app.ID,
+			"from", shortSHA(base), "to", shortSHA(event.CommitSHA), "err", err)
+		return
+	}
+	// ListCommitsSince returns commits oldest-first with the pushed head last;
+	// the head's own run is created by the normal path, so drop it here.
+	if n := len(commits); n > 0 && commits[n-1].SHA == event.CommitSHA {
+		commits = commits[:n-1]
+	}
+	if len(commits) == 0 {
+		return
+	}
+	if len(commits) > maxBackfillCommits {
+		slog.Warn("lineage: missed-commit backlog exceeds cap; syncing to head without per-commit backfill",
+			"app", app.ID, "missed", len(commits), "cap", maxBackfillCommits,
+			"from", shortSHA(base), "to", shortSHA(event.CommitSHA))
+		return
+	}
+
+	filesLister, _ := prov.(provider.CommitFilesLister)
+	parent := base
+	for _, c := range commits {
+		missed := provider.PushEvent{
+			ProviderID: app.Provider,
+			RepoOwner:  app.Owner,
+			RepoName:   app.Repo,
+			Branch:     event.Branch,
+			CommitSHA:  c.SHA,
+			BeforeSHA:  parent,
+			CommitMsg:  c.Message,
+			AuthorName: c.Author,
+		}
+		// Populate changed files so path-based skip conditions apply just as
+		// they would have for the live delivery (best-effort).
+		if filesLister != nil {
+			if files, err := filesLister.ListCommitFiles(ctx, app.Owner, app.Repo, c.SHA); err != nil {
+				slog.Warn("lineage: list files for missed commit",
+					"app", app.ID, "sha", shortSHA(c.SHA), "err", err)
+			} else {
+				missed.ChangedFiles = files
+			}
+		}
+		status, _, _ := h.enqueueRunForCommit(ctx, app, missed)
+		slog.Info("lineage: backfilled missed commit",
+			"app", app.ID, "sha", shortSHA(c.SHA), "status", status)
+		parent = c.SHA
+	}
 }
 
 // blockApp marks the application as blocked with a reason and recovery
