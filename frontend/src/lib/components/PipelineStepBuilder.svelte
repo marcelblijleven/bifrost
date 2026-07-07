@@ -65,7 +65,7 @@
   }
 
   const LABELS: Record<string, string> = {
-    semver:           'Semver tag',
+    semver:           'Determine semver',
     tag:              'Tag',
     changelog:        'Changelog',
     approval:         'Approval gate',
